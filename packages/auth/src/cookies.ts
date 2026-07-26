@@ -26,6 +26,24 @@ export const sessionCookieOptions = (secure: boolean): CookieOptions => ({
   maxAge: SESSION_TTL_SECONDS,
 });
 
+/**
+ * Options for *removing* a cookie. Not optional, and not the same as passing
+ * `{ path: "/" }`.
+ *
+ * `__Host-` is validated on the way out as well as the way in: Hono throws
+ * `__Host- Cookie must have Secure attributes` when serialising a deletion that
+ * omits it. Since the prefix only appears when `secure` is true, a call site
+ * that hardcodes `{ path: "/" }` works perfectly in development and throws on
+ * every production request — which is exactly how this shipped. The attributes
+ * live here so there is one place to get them right.
+ */
+export const deleteCookieOptions = (secure: boolean): CookieOptions => ({
+  httpOnly: true,
+  secure,
+  sameSite: "Lax",
+  path: "/",
+});
+
 export const OAUTH_STATE_TTL_SECONDS = 600;
 
 export const stateCookieOptions = (secure: boolean): CookieOptions => ({

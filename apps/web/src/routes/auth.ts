@@ -4,6 +4,7 @@ import {
   type AuthEnv,
   buildAuthorizeUrl,
   createRateLimiter,
+  deleteCookieOptions,
   exchangeCodeForToken,
   fetchGitHubUserId,
   type OAuthConfig,
@@ -103,8 +104,9 @@ export function createAuthRoutes(env: PlatformEnv) {
 
     const stateCookie = stateCookieName(secure);
     const expected = getCookie(c, stateCookie);
+
     // Single-use regardless of outcome, so a failed attempt cannot be replayed.
-    deleteCookie(c, stateCookie, { path: "/" });
+    deleteCookie(c, stateCookie, deleteCookieOptions(secure));
 
     const returned = c.req.query("state");
     const code = c.req.query("code");
@@ -129,7 +131,7 @@ export function createAuthRoutes(env: PlatformEnv) {
 
   // POST so a stray <img src="/auth/logout"> or a prefetch cannot sign you out.
   auth.post("/auth/logout", (c) => {
-    deleteCookie(c, sessionCookieName(secure), { path: "/" });
+    deleteCookie(c, sessionCookieName(secure), deleteCookieOptions(secure));
     return c.redirect("/", 303);
   });
 

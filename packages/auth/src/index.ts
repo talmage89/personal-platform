@@ -1,4 +1,5 @@
 export {
+  deleteCookieOptions,
   OAUTH_STATE_TTL_SECONDS,
   sessionCookieName,
   sessionCookieOptions,
