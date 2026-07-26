@@ -2,7 +2,9 @@
 
 A cryptic public face; behind one link, a directory of small utilities.
 
-Architecture and rationale: [`docs/architecture.md`](docs/architecture.md).
+New here? Start with [`docs/context.md`](docs/context.md) — what this is for, what it
+optimises for, and which decisions are settled. Then
+[`docs/architecture.md`](docs/architecture.md) for how it all works.
 
 ## Setup
 
