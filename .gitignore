@@ -1,0 +1,29 @@
+# dependencies
+node_modules
+
+# secrets
+.env
+.env.*
+!.env.example
+
+# prisma artifacts
+**/prisma/generated
+
+# build output
+dist
+out
+*.tgz
+
+# generated css
+apps/web/public/styles.css
+
+# coverage
+coverage
+*.lcov
+
+# logs
+logs
+*.log
+
+# os
+.DS_Store
