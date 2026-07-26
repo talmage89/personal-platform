@@ -1,0 +1,45 @@
+name: check
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One run per branch; a newer push makes an in-flight run irrelevant.
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.5"
+
+      - run: bun install --frozen-lockfile
+
+      # The generated Prisma client is gitignored, and packages/db re-exports its
+      # types — both check:types and the test suite fail without this step.
+      #
+      # It needs no database: `prisma generate` reads the schema folder only and
+      # succeeds with DB_URL unset. This job never opens a connection, so CI can
+      # never wake Neon.
+      - run: bun run db:generate
+
+      - name: Lint and format
+        run: bun run check:lint # biome check = lint + formatting + import order
+
+      - name: Typecheck
+        run: bun run check:types # fans out to each workspace's own tsconfig
+
+      # Not requested, but the perimeter test is the one that enforces "the public
+      # surface issues zero database queries". Drop this step and that guarantee
+      # stops being checked anywhere.
+      - name: Test
+        run: bun test

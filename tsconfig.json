@@ -1,0 +1,11 @@
+// Exists so that a bare `bun test` / `bun x tsc` at the repo root resolves JSX against
+// hono/jsx rather than React. Bun reads compilerOptions from the nearest tsconfig.json to
+// the cwd, and without this file it falls back to the default `react-jsx` import source and
+// fails with "Cannot find module 'react/jsx-dev-runtime'".
+//
+// `include: []` is deliberate: type checking is per-package (`bun run check:types` fans out
+// to each workspace's own tsconfig). This file configures the runtime, nothing else.
+{
+  "extends": "./tsconfig.base.json",
+  "include": []
+}

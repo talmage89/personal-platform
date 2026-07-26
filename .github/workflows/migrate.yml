@@ -1,0 +1,50 @@
+name: migrate
+
+# Applies pending Prisma migrations to the production Neon database.
+#
+# The path filter is load-bearing, not an optimisation. `prisma migrate deploy`
+# connects and writes the `_prisma_migrations` table even when there is nothing to
+# apply — verified against a local Postgres with an empty migrations folder, which
+# still created the table and exited 0. Triggering on every push to main would
+# therefore wake Neon on every push, which is the exact cost this project is built
+# to avoid. Only a change under migrations/ can start this workflow.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/db/prisma/migrations/**"
+  workflow_dispatch: # for a manual apply, e.g. the first migration
+
+permissions:
+  contents: read
+
+# Never cancel a migration in flight — a half-applied schema is worse than a
+# queued one. Runs serialise instead.
+concurrency:
+  group: migrate-production
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.5"
+
+      - run: bun install --frozen-lockfile
+
+      # No `db:generate` here on purpose: `migrate deploy` reads the schema folder
+      # and the migrations directory, and never touches the generated client.
+
+      - name: Apply migrations
+        run: bun run db:deploy
+        env:
+          # MUST be the DIRECT Neon connection string, not the pooled one —
+          # i.e. the host WITHOUT `-pooler` in it. Prisma Migrate takes a
+          # session-scoped advisory lock, and Neon's pooler is PgBouncer in
+          # transaction mode, which can route the lock and the release to
+          # different backends. See docs/architecture.md.
+          DB_URL: ${{ secrets.DB_URL }}

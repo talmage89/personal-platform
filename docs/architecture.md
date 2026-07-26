@@ -64,8 +64,42 @@ fails. This is a behavioral guarantee — far stronger than grepping imports, an
   aimed at prod. An entrypoint migration would wake the DB on every restart and redeploy.
 - Adapter chosen by URL shape, so one schema and one migration history serve both envs:
   ```ts
-  DB_URL.includes("neon.tech") ? new PrismaNeonHTTP(neon(DB_URL)) : new PrismaPg({ connectionString: DB_URL })
+  DB_URL.includes("neon.tech") ? new PrismaNeonHttp(DB_URL, {}) : new PrismaPg({ connectionString: DB_URL })
   ```
+
+### Pooled vs direct: the app and migrations want different URLs
+
+Neon hands out two hostnames for the same database, differing only by `-pooler`:
+
+| | host | used by |
+|---|---|---|
+| pooled | `ep-xxx-pooler.<region>.aws.neon.tech` | the running app (Cloud Run) |
+| direct | `ep-xxx.<region>.aws.neon.tech` | `prisma migrate deploy` (CI) |
+
+**Migrations must use the direct URL.** Prisma Migrate takes a *session-scoped* advisory
+lock (`pg_advisory_lock`) so two concurrent deploys can't interleave. Neon's pooler is
+PgBouncer in **transaction** pooling mode, which is free to route each statement to a
+different backend — so the lock can be acquired on one connection and the release issued on
+another. The same mode also breaks statements that cannot run inside a transaction block,
+`CREATE INDEX CONCURRENTLY` being the one most likely to bite. The failure mode is nasty
+because it is *intermittent*: small migrations usually work, which is exactly what makes it
+a bad thing to discover later. Prisma ships `PRISMA_MIGRATE_SKIP_ADVISORY_LOCK=1` as an
+escape hatch — the existence of that flag is the tell.
+
+The app itself is unaffected: it issues one-shot queries over the HTTP driver, needs no
+session state, and genuinely wants the pooler.
+
+### CI and the constraint
+
+`.github/workflows/check.yml` runs on every push and **never touches a database** —
+`prisma generate` reads the schema folder only and succeeds with `DB_URL` unset.
+
+`.github/workflows/migrate.yml` is the one thing in CI allowed to connect, and it is
+deliberately triggered by `paths: packages/db/prisma/migrations/**` rather than by every push
+to main. `migrate deploy` connects and writes `_prisma_migrations` **even when there is
+nothing to apply** — verified against a local Postgres with an empty migrations folder, which
+still created the table and exited 0. Without the path filter, every push to main would wake
+Neon for no reason.
 
 ### Bot hygiene
 

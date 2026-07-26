@@ -51,8 +51,24 @@ it. Before adding anything to the unauthenticated path, read the constraint sect
 - [x] **Phase 0** — workspaces, env, server skeleton, `/healthz`, docker, image budget
 - [x] **Phase 1** — landing page, GitHub OAuth, session, gate, rate limit, perimeter test
 - [x] **Phase 2** — shared UI, utility contract, directory
-- [ ] **Phase 3** — `@platform/db`, Neon, deploy
+- [x] **Phase 3** — `@platform/db`, lazy client, Neon, deploy, CI
 - [ ] 🛑 **Weight utility** — blocked on direction; placeholder only
+
+## CI
+
+| workflow | trigger | does |
+|---|---|---|
+| `check.yml` | every push | lint + format, typecheck, tests. Never touches a database. |
+| `migrate.yml` | pushes to `main` **that change `packages/db/prisma/migrations/**`** | `prisma migrate deploy` against Neon |
+
+The migration workflow's path filter is deliberate: `migrate deploy` connects and writes
+`_prisma_migrations` even with nothing to apply, so triggering it on every push to `main`
+would wake Neon on every push.
+
+Its `DB_URL` secret must be Neon's **direct** connection string — the host *without*
+`-pooler`. Prisma Migrate takes a session-scoped advisory lock, and Neon's pooler is
+PgBouncer in transaction mode, which can route the lock and its release to different
+backends. The app keeps using the pooled URL. See `docs/architecture.md`.
 
 ## Signing in
 
