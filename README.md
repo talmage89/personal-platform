@@ -34,7 +34,17 @@ it. Before adding anything to the unauthenticated path, read the constraint sect
 ## Status
 
 - [x] **Phase 0** — workspaces, env, server skeleton, `/healthz`, docker, image budget
-- [ ] **Phase 1** — landing page, GitHub OAuth, session, gate, perimeter test
-- [ ] **Phase 2** — Tailwind theme, layout, utility contract, directory
+- [x] **Phase 1** — landing page, GitHub OAuth, session, gate, rate limit, perimeter test
+- [ ] **Phase 2** — layout, utility contract, directory
 - [ ] **Phase 3** — ship
 - [ ] 🛑 **Weight utility** — blocked on direction; placeholder only
+
+## Signing in
+
+Requires a GitHub OAuth app — until one is configured, `/auth/github` answers 503 with
+instructions and everything else works. Register at github.com/settings/developers with
+callback `$PUBLIC_URL/auth/callback`, then fill in `GITHUB_CLIENT_ID`,
+`GITHUB_CLIENT_SECRET`, and `ALLOWED_GITHUB_ID` (your *numeric* id —
+`curl -s https://api.github.com/users/<you> | jq .id`; usernames can be reclaimed).
+
+A production deploy missing any of the three refuses to boot. Development does not need them.

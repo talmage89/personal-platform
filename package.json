@@ -12,7 +12,7 @@
     "start": "NODE_ENV=production bun apps/web/dist/index.js",
     "db:up": "docker compose up -d db",
     "db:down": "docker compose down",
-    "test": "bun test",
+    "test": "bun run --filter '*' test",
     "check": "run-s check:lint check:types",
     "check:fix": "run-s check:lint:fix check:types",
     "check:lint": "biome check .",

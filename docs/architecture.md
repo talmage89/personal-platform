@@ -357,13 +357,34 @@ Zod-validated at boot, fail fast. `DB_URL` is validated for *shape* only — nev
 
 | Phase | |
 |---|---|
-| 0 | Workspaces, tsconfig, biome, compose, Dockerfile, env schema, `/healthz` |
-| 1 | Landing page, GitHub OAuth, session, gate, rate limit, **perimeter test** |
-| 2 | Tailwind theme + fonts, root/layout, utility contract, directory page, weight *placeholder* |
+| 0 | ✅ Workspaces, tsconfig, biome, compose, Dockerfile, env schema, `/healthz` |
+| 1 | ✅ Landing page, GitHub OAuth, session, gate, rate limit, **perimeter test** |
+| 2 | Root/layout refinement, utility contract, directory page, weight *placeholder* |
 | 3 | Ship: image size pass, Neon project + 5-min suspend, deploy, verify perimeter in prod |
 | — | 🛑 Weight utility — blocked on direction, not scheduled |
 
 Phase 1 lands the constraint before any code exists that could violate it. Phase 2 ends with a
 deployable platform whose only utility is a stub; the weight build begins as its own phase once
 direction arrives.
+
+**Tailwind moved from Phase 2 into Phase 1.** The CSP forbids inline `<style>`, so a styled
+landing page needs the stylesheet build to exist — there was no way to ship Phase 1's public
+face without it. Phase 2 keeps the layout and registry work.
+
+### Things Phase 1 discovered
+
+- **Hono emits no doctype for JSX responses.** Without one the browser silently enters quirks
+  mode. `Root` prefixes `raw("<!doctype html>")`, and the perimeter test asserts it.
+- **`trimTrailingSlash` only fires on a 404.** Now that the gate redirects every anonymous
+  request, trailing-slash trimming is observable only behind the gate — which is where it
+  matters anyway (`/weight/` → `/weight`).
+- **`getConnInfo` throws without a live socket**, i.e. under Hono's `app.request()` in tests.
+  The rate limiter falls back to a single shared bucket, which over-limits rather than under-
+  limits. Tolerable only because the limiter is defence in depth.
+- **Docker `COPY` cannot glob across directories while preserving structure.** Staging one
+  manifest line per workspace package is a footgun that broke the build the first time a
+  package was added; the Dockerfile now copies the tree and eats a ~7s uncached install.
+- **`bun test` and `tsc` both need per-package invocation** in this layout — there is no root
+  `tsconfig.json`, so the root runner delegates via `bun run --filter '*'`. Running `bun test`
+  from the repo root resolves JSX against React and fails.
 ```

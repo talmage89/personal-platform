@@ -1,0 +1,94 @@
+@import "tailwindcss";
+
+@font-face {
+  font-family: "Switzer";
+  src: url("/fonts/switzer-400.woff2") format("woff2");
+  font-weight: 400;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Switzer";
+  src: url("/fonts/switzer-600.woff2") format("woff2");
+  font-weight: 600;
+  font-display: block;
+}
+
+/*
+ * Colours resolve through light-dark(), which means no `dark:` variant appears
+ * anywhere in the markup — the palette flips on its own from `color-scheme`.
+ * That is what keeps the JSX as bare as the reference design.
+ */
+@theme {
+  --font-sans: "Switzer", system-ui, sans-serif;
+
+  --color-fg: light-dark(#000, #d4d4d4);
+  --color-bg: light-dark(#fff, #0e0e0e);
+  --color-muted: light-dark(#666, #8a8a8a);
+  --color-rule: light-dark(#000, #d4d4d4);
+
+  --text-base: 16px;
+  --leading-base: 1.4;
+  --spacing-column: 640px;
+}
+
+@layer base {
+  :root {
+    color-scheme: light dark;
+  }
+
+  html {
+    font-family: var(--font-sans);
+    font-size: var(--text-base);
+    line-height: var(--leading-base);
+    color: var(--color-fg);
+    background: var(--color-bg);
+    scrollbar-gutter: stable;
+  }
+
+  body {
+    max-width: var(--spacing-column);
+    margin: 0 auto;
+    padding: 1rem;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  main {
+    flex: 1;
+  }
+
+  a {
+    color: var(--color-fg);
+    text-decoration: underline;
+  }
+
+  a:hover {
+    text-decoration: none;
+  }
+
+  /* Headings carry weight, not size. The column does the hierarchy. */
+  h1,
+  h2,
+  h3 {
+    font-weight: 600;
+    font-size: 1rem;
+  }
+
+  ul,
+  ol {
+    list-style: none;
+  }
+
+  hr {
+    border: none;
+    border-top: 1px solid var(--color-rule);
+    margin: 1rem 0;
+  }
+
+  footer {
+    font-size: 0.875rem;
+    color: var(--color-muted);
+  }
+}

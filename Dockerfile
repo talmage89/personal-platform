@@ -1,15 +1,15 @@
 FROM oven/bun:1-alpine AS build
 WORKDIR /app
 
-# Workspace manifests first, so `bun install` is cached until a dependency changes.
-# Add a line here for every new workspace package.
-COPY package.json bun.lock tsconfig.base.json ./
-COPY apps/web/package.json ./apps/web/
-COPY packages/core/package.json ./packages/core/
+# Deliberately copying everything before installing, rather than staging each
+# workspace manifest for a cached install layer. Docker's COPY cannot glob across
+# directories while preserving structure, so the staged version needs one line
+# per package — and a forgotten line fails the build with an unresolved workspace
+# dependency, which is exactly how @platform/auth broke this. The install takes
+# about seven seconds; that is cheaper than the footgun.
+COPY . .
 
 RUN bun install --frozen-lockfile
-
-COPY . .
 RUN bun run build
 
 FROM oven/bun:distroless AS runner

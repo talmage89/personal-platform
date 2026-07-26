@@ -1,17 +1,18 @@
 {
-  "name": "@platform/core",
+  "name": "@platform/auth",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./env": "./src/env.ts"
+    ".": "./src/index.ts"
   },
   "scripts": {
     "check:types": "tsc --noEmit",
     "test": "bun test"
   },
   "dependencies": {
+    "@platform/core": "workspace:*",
+    "hono": "^4.11.4",
     "zod": "^4.3.5"
   }
 }

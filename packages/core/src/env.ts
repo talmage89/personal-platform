@@ -28,18 +28,35 @@ const httpUrl = z.string().refine(
   { message: "must be an http:// or https:// URL" },
 );
 
-const schema = z.object({
-  NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
-  PORT: z.coerce.number().int().positive().max(65535).default(8080),
-  PUBLIC_URL: httpUrl.default("http://localhost:8080"),
-  DB_URL: postgresUrl,
+const GITHUB_KEYS = ["GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET", "ALLOWED_GITHUB_ID"] as const;
 
-  // Phase 1 (auth). Optional until auth lands, then promoted to required.
-  SESSION_SECRET: z.string().min(32, "must be at least 32 characters").optional(),
-  GITHUB_CLIENT_ID: z.string().min(1).optional(),
-  GITHUB_CLIENT_SECRET: z.string().min(1).optional(),
-  ALLOWED_GITHUB_ID: z.string().regex(/^\d+$/, "must be a numeric GitHub user id").optional(),
-});
+const schema = z
+  .object({
+    NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
+    PORT: z.coerce.number().int().positive().max(65535).default(8080),
+    PUBLIC_URL: httpUrl.default("http://localhost:8080"),
+    DB_URL: postgresUrl,
+
+    // Always required — it costs one `openssl rand` and nothing else.
+    SESSION_SECRET: z.string().min(32, "must be at least 32 characters"),
+
+    // Required in production only (see the refinement below). Registering a
+    // GitHub OAuth app is real setup friction, and a developer should be able to
+    // work on the platform before doing it. Locally, /auth/* answers 503 until
+    // these are filled in; a production deploy without them refuses to boot.
+    GITHUB_CLIENT_ID: z.string().min(1).optional(),
+    GITHUB_CLIENT_SECRET: z.string().min(1).optional(),
+    ALLOWED_GITHUB_ID: z.string().regex(/^\d+$/, "must be a numeric GitHub user id").optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.NODE_ENV !== "production") return;
+
+    for (const key of GITHUB_KEYS) {
+      if (!value[key]) {
+        ctx.addIssue({ code: "custom", path: [key], message: "is required in production" });
+      }
+    }
+  });
 
 export type Env = z.infer<typeof schema>;
 
