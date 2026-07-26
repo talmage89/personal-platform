@@ -22,6 +22,12 @@ bun run dev              # http://localhost:8080
 | `bun run check` | lint + typecheck (`check:fix` to autofix) |
 | `bun run build` | bundle to `apps/web/dist` |
 | `bun run db:up` / `db:down` | dev postgres |
+| `bun run db:generate` | regenerate the Prisma client |
+| `bun run db:migrate` | create + apply a migration (dev) |
+| `bun run db:deploy` | apply pending migrations (prod) |
+
+`db:deploy` is run deliberately against production, never from the container entrypoint — a
+migration on boot would wake Neon on every restart and redeploy.
 
 ## Adding a utility
 

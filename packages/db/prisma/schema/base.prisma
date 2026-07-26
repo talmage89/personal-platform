@@ -1,0 +1,19 @@
+// Multi-file schema. Prisma reads every .prisma in this folder, so each utility
+// gets its own file named after it — this one holds only the generator and
+// datasource.
+//
+// engineType = "client" means no query engine binary ships with the app, which
+// is the single largest lever on image size.
+
+generator client {
+  provider   = "prisma-client"
+  output     = "../generated"
+  engineType = "client"
+  runtime    = "bun"
+}
+
+// The URL is supplied at runtime by the driver adapter, never read from here.
+// Nothing about loading this schema opens a connection.
+datasource db {
+  provider = "postgresql"
+}

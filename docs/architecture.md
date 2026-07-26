@@ -50,12 +50,15 @@ fails. This is a behavioral guarantee — far stronger than grepping imports, an
 
 ### Neon-specific levers
 
-- **Use the HTTP driver** (`neon()` + `PrismaNeonHTTP`), not the WebSocket `Pool`. A live
-  pool socket holds the compute *awake*, which is the single largest free-tier waster. HTTP
-  is request-scoped, lets the compute suspend, and drops the `ws` dependency from the bundle.
-  Cost: no interactive transactions. Fine here — `$transaction([...])` batch form still works,
-  and these utilities write one row at a time. *Verify `PrismaNeonHTTP`'s exact export and
-  constructor against the installed `@prisma/adapter-neon` at buildout.*
+- **Use the HTTP driver**, not the WebSocket `Pool`. A live pool socket holds the compute
+  *awake*, which is the single largest free-tier waster. HTTP is request-scoped, lets the
+  compute suspend, and drops the `ws` dependency from the bundle. Cost: no interactive
+  transactions. Fine here — `$transaction([...])` batch form still works, and these utilities
+  write one row at a time.
+
+  The class is **`PrismaNeonHttp`** (not `PrismaNeonHTTP`) and it takes a **connection string
+  directly**, not a `neon()` client: `new PrismaNeonHttp(url, {})`. Verified against
+  `@prisma/adapter-neon@7.9.0`.
 - **Set Neon's suspend timeout to the 5-minute minimum** in the console. Console config, not code.
 - **Never run migrations at boot.** `prisma migrate deploy` is an explicit `bun run db:deploy`
   aimed at prod. An entrypoint migration would wake the DB on every restart and redeploy.
@@ -321,9 +324,27 @@ Curiosity worth knowing: `oven/bun:1-alpine` (146 MB) is *smaller uncompressed* 
 `oven/bun:distroless` (165 MB), but compresses to about the same. Distroless still wins on
 attack surface.
 
-⚠ **Re-measure when Prisma lands.** The client is the next real weight. Verify whether
-`engineType = "client"` emits a `.wasm` query compiler needing its own `COPY` — distroless has
-no shell to debug that from, so confirm the container serves traffic before deploying.
+### Prisma's cost, measured
+
+**No wasm.** `engineType = "client"` emits pure TypeScript — the generated client is 52 KB and
+there is no query-compiler binary to `COPY`. The Phase 0 open question is closed.
+
+**But the runtime is not free.** Measured by bundling a probe that imports `@platform/db`:
+
+| bundle | raw | gzip |
+|---|---|---|
+| without Prisma (today) | 385 KB | 86 KB |
+| with Prisma imported | 5.6 MB | **1.9 MB** |
+
+So the first utility that touches the database moves the image from ~41 MB to **~43 MB
+compressed** — still under budget, but it spends most of the remaining headroom in one step.
+
+The image is *currently* unchanged at 41 MB because nothing imports `@platform/db` yet. Do not
+mistake that for Prisma being cheap.
+
+**Lever held in reserve:** production only ever uses `PrismaNeonHttp`; `@prisma/adapter-pg`
+exists solely for local development. Marking it external in the production build would claw
+back part of that 1.9 MB. Not worth doing until a utility actually ships.
 
 ## Environment
 
@@ -403,4 +424,16 @@ face without it. Phase 2 keeps the layout and registry work.
 - **`@platform/db` is deliberately still unbuilt.** With no models it would be untestable
   scaffolding, and the models wait on weight direction. It moves to Phase 3, where its real
   cost — the Prisma client's contribution to image size — can actually be measured.
+
+### Things Phase 3 discovered
+
+- **`prisma generate` succeeds with an empty `DB_URL`.** The Docker build needs no stub value
+  (port-2026 carries `ENV DB_URL="prisma-db-url-stub"` for this; we don't have to).
+- **A schema with zero models generates cleanly**, which is what lets `@platform/db` exist and
+  be tested before any utility defines a table.
+- **`bun add --cwd <dir>` writes to the *root* manifest if that directory has no
+  `package.json` yet.** Create the manifest first, or dependencies land in the wrong place
+  silently.
+- **Biome's exclude patterns need `/**`** — `!**/prisma/generated` does not exclude the
+  directory's contents and produces confusing `internalError/fs` diagnostics.
 ```
