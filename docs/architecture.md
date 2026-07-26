@@ -359,8 +359,8 @@ Zod-validated at boot, fail fast. `DB_URL` is validated for *shape* only — nev
 |---|---|
 | 0 | ✅ Workspaces, tsconfig, biome, compose, Dockerfile, env schema, `/healthz` |
 | 1 | ✅ Landing page, GitHub OAuth, session, gate, rate limit, **perimeter test** |
-| 2 | Root/layout refinement, utility contract, directory page, weight *placeholder* |
-| 3 | Ship: image size pass, Neon project + 5-min suspend, deploy, verify perimeter in prod |
+| 2 | ✅ Shared UI package, utility contract, directory page, weight *placeholder* |
+| 3 | Ship: `@platform/db`, image size pass, Neon project + 5-min suspend, deploy |
 | — | 🛑 Weight utility — blocked on direction, not scheduled |
 
 Phase 1 lands the constraint before any code exists that could violate it. Phase 2 ends with a
@@ -387,4 +387,20 @@ face without it. Phase 2 keeps the layout and registry work.
 - **`bun test` and `tsc` both need per-package invocation** in this layout — there is no root
   `tsconfig.json`, so the root runner delegates via `bun run --filter '*'`. Running `bun test`
   from the repo root resolves JSX against React and fails.
+
+### Things Phase 2 discovered
+
+- **The page shell had to become a package.** `Root` and `Layout` originally lived in
+  `apps/web`, but a utility importing from the app that mounts it is a cycle. They moved to
+  `@platform/ui`, which both sides may depend on.
+- **`mountUtilities` validates the registry at boot** rather than trusting it. Two silent
+  failure modes are now loud: duplicate slugs (the second utility becomes unreachable, and
+  which one wins depends on array order) and reserved slugs — a utility called `auth` would
+  capture the login routes and lock you out of your own site.
+- **`bun test` exits non-zero for a package with no test files**, so every package carries at
+  least one. That is a feature: it forced real coverage onto `@platform/ui` instead of a
+  skipped script that would quietly never run.
+- **`@platform/db` is deliberately still unbuilt.** With no models it would be untestable
+  scaffolding, and the models wait on weight direction. It moves to Phase 3, where its real
+  cost — the Prisma client's contribution to image size — can actually be measured.
 ```

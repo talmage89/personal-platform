@@ -17,6 +17,9 @@
       "dependencies": {
         "@platform/auth": "workspace:*",
         "@platform/core": "workspace:*",
+        "@platform/ui": "workspace:*",
+        "@platform/utility-kit": "workspace:*",
+        "@platform/utility-weight": "workspace:*",
         "@tailwindcss/cli": "^4.1.18",
         "hono": "^4.11.4",
         "tailwindcss": "^4.1.18",
@@ -39,6 +42,31 @@
       "version": "0.0.0",
       "dependencies": {
         "zod": "^4.3.5",
+      },
+    },
+    "packages/ui": {
+      "name": "@platform/ui",
+      "version": "0.0.0",
+      "dependencies": {
+        "hono": "^4.11.4",
+      },
+    },
+    "packages/utility-kit": {
+      "name": "@platform/utility-kit",
+      "version": "0.0.0",
+      "dependencies": {
+        "@platform/auth": "workspace:*",
+        "hono": "^4.11.4",
+      },
+    },
+    "packages/utility-weight": {
+      "name": "@platform/utility-weight",
+      "version": "0.0.0",
+      "dependencies": {
+        "@platform/auth": "workspace:*",
+        "@platform/ui": "workspace:*",
+        "@platform/utility-kit": "workspace:*",
+        "hono": "^4.11.4",
       },
     },
   },
@@ -102,6 +130,12 @@
     "@platform/auth": ["@platform/auth@workspace:packages/auth"],
 
     "@platform/core": ["@platform/core@workspace:packages/core"],
+
+    "@platform/ui": ["@platform/ui@workspace:packages/ui"],
+
+    "@platform/utility-kit": ["@platform/utility-kit@workspace:packages/utility-kit"],
+
+    "@platform/utility-weight": ["@platform/utility-weight@workspace:packages/utility-weight"],
 
     "@platform/web": ["@platform/web@workspace:apps/web"],
 

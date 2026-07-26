@@ -1,5 +1,5 @@
+import { Root } from "@platform/ui";
 import { stanzaForDate } from "~/app/poem.ts";
-import { Root } from "~/app/root.tsx";
 
 /**
  * The only page an anonymous visitor can reach. Zero queries, zero JavaScript,

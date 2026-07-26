@@ -18,6 +18,9 @@
   "dependencies": {
     "@platform/auth": "workspace:*",
     "@platform/core": "workspace:*",
+    "@platform/ui": "workspace:*",
+    "@platform/utility-kit": "workspace:*",
+    "@platform/utility-weight": "workspace:*",
     "@tailwindcss/cli": "^4.1.18",
     "hono": "^4.11.4",
     "tailwindcss": "^4.1.18"

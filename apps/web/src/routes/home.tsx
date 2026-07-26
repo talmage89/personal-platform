@@ -1,8 +1,8 @@
 import type { AuthEnv } from "@platform/auth";
-import type { Env as PlatformEnv } from "@platform/core";
+import type { Utility } from "@platform/utility-kit";
 import { Hono } from "hono";
 import { secondsUntilRollover } from "~/app/poem.ts";
-import { Root } from "~/app/root.tsx";
+import { Directory } from "./directory.tsx";
 import { renderLanding } from "./landing.tsx";
 
 /**
@@ -10,7 +10,7 @@ import { renderLanding } from "./landing.tsx";
  * check, not a lookup — so an anonymous request and a signed-in one both cost
  * zero queries.
  */
-export function createHomeRoutes(_env: PlatformEnv) {
+export function createHomeRoutes(utilities: readonly Utility[]) {
   const home = new Hono<AuthEnv>();
 
   home.get("/", (c) => {
@@ -23,7 +23,7 @@ export function createHomeRoutes(_env: PlatformEnv) {
     if (session) {
       c.header("Cache-Control", "private, no-store");
       c.header("X-Robots-Tag", "noindex, nofollow");
-      return c.html(<Directory />);
+      return c.html(<Directory utilities={utilities} />);
     }
 
     // Valid until the stanza rolls over at UTC midnight, bounded so a long-lived
@@ -34,26 +34,4 @@ export function createHomeRoutes(_env: PlatformEnv) {
   });
 
   return home;
-}
-
-/** Placeholder. Phase 2 renders this from the utility registry. */
-function Directory() {
-  return (
-    <Root title="index">
-      <main>
-        <h1>index</h1>
-        <hr />
-        <ul>
-          <li class="text-muted">no utilities yet</li>
-        </ul>
-      </main>
-      <footer class="mt-8">
-        <form method="post" action="/auth/logout">
-          <button type="submit" class="cursor-pointer underline hover:no-underline">
-            leave
-          </button>
-        </form>
-      </footer>
-    </Root>
-  );
 }

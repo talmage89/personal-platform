@@ -1,5 +1,6 @@
 import { type AuthEnv, loadSession, requireSession } from "@platform/auth";
 import type { Env as PlatformEnv } from "@platform/core";
+import { mountUtilities, type Utility } from "@platform/utility-kit";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { serveStatic } from "hono/bun";
@@ -11,6 +12,7 @@ import { trimTrailingSlash } from "hono/trailing-slash";
 import { createAuthRoutes } from "~/routes/auth.ts";
 import { health } from "~/routes/health.ts";
 import { createHomeRoutes } from "~/routes/home.tsx";
+import { utilities as registeredUtilities } from "~/utilities.ts";
 
 /**
  * Route order encodes the security model. Everything above `requireSession` is
@@ -18,7 +20,10 @@ import { createHomeRoutes } from "~/routes/home.tsx";
  * the database; everything below it is gated. Adding a route above that line is
  * the one change that can break the Neon guarantee — see the perimeter test.
  */
-export function createServer(env: PlatformEnv) {
+export function createServer(
+  env: PlatformEnv,
+  utilities: readonly Utility[] = registeredUtilities,
+) {
   const app = new Hono<AuthEnv>();
 
   // Ahead of the logger so platform liveness polling stays out of the logs.
@@ -59,12 +64,14 @@ export function createServer(env: PlatformEnv) {
 
   // ---- public surface: no database access permitted below this line ----
   app.route("/", createAuthRoutes(env));
-  app.route("/", createHomeRoutes(env));
+  app.route("/", createHomeRoutes(utilities));
   // ---- end public surface ----
 
   app.use("/*", requireSession());
 
-  // Phase 2 mounts each registered utility here, behind the gate.
+  // Everything below is unreachable without a valid session. Slug collisions and
+  // reserved names throw here, at boot, rather than silently shadowing a route.
+  mountUtilities(app, utilities);
 
   app.notFound((c) => c.text("not found", 404));
 

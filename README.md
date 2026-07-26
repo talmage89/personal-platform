@@ -23,6 +23,15 @@ bun run dev              # http://localhost:8080
 | `bun run build` | bundle to `apps/web/dist` |
 | `bun run db:up` / `db:down` | dev postgres |
 
+## Adding a utility
+
+Each utility is a workspace package exporting a `Utility`. Create
+`packages/utility-<name>` modelled on `utility-weight`, then add one import and one array
+entry to `apps/web/src/utilities.ts`. That array both mounts the routes and renders the
+directory, so a listed utility is always a reachable one.
+
+Slugs are validated at boot: no duplicates, and no shadowing a platform route like `auth`.
+
 ## The one rule
 
 **The public surface issues zero database queries.** Neon bills compute-hours and this site is
@@ -35,8 +44,8 @@ it. Before adding anything to the unauthenticated path, read the constraint sect
 
 - [x] **Phase 0** — workspaces, env, server skeleton, `/healthz`, docker, image budget
 - [x] **Phase 1** — landing page, GitHub OAuth, session, gate, rate limit, perimeter test
-- [ ] **Phase 2** — layout, utility contract, directory
-- [ ] **Phase 3** — ship
+- [x] **Phase 2** — shared UI, utility contract, directory
+- [ ] **Phase 3** — `@platform/db`, Neon, deploy
 - [ ] 🛑 **Weight utility** — blocked on direction; placeholder only
 
 ## Signing in
