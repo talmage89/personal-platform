@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@platform/auth": "workspace:*",
+    "@platform/db": "workspace:*",
     "@platform/ui": "workspace:*",
     "@platform/utility-kit": "workspace:*",
     "hono": "^4.11.4"

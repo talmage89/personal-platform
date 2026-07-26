@@ -52,7 +52,22 @@ it. Before adding anything to the unauthenticated path, read the constraint sect
 - [x] **Phase 1** — landing page, GitHub OAuth, session, gate, rate limit, perimeter test
 - [x] **Phase 2** — shared UI, utility contract, directory
 - [x] **Phase 3** — `@platform/db`, lazy client, Neon, deploy, CI
-- [ ] 🛑 **Weight utility** — blocked on direction; placeholder only
+- [x] **Weight utility** — daily entry, backfill, metrics, chart, per-user preferences
+
+## Users and preferences
+
+The platform assumes there may be more than one person. `ALLOWED_GITHUB_ID` accepts a
+comma-separated list, and every row a utility owns is scoped to a `User`.
+
+Login still issues **zero queries** — who may sign in is decided by that environment
+allowlist, not by a lookup. A `User` row is created lazily on the first authenticated
+request that needs one, already behind the gate, so authorisation never depends on the
+database being awake.
+
+Preferences live per person: timezone on `User` (a fact about someone, reusable by any
+future utility), units and target rate on `WeightSettings`. Both are edited from
+`/weight/settings`. Timezone decides which calendar day a weigh-in belongs to — it is not
+cosmetic, and it is not an environment variable.
 
 ## CI
 

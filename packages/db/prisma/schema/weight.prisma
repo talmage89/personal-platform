@@ -1,0 +1,53 @@
+// Weight utility. One file per utility — see base.prisma.
+
+/// How a person wants weights shown to them. Storage is always grams.
+enum WeightUnit {
+  lb
+  kg
+}
+
+/// A single weigh-in. At most one per person per day.
+model WeightEntry {
+  id String @id @default(uuid(7))
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// A civil date, not an instant. Always stored at UTC midnight so that a
+  /// "2026-07-26" key round-trips unchanged no matter what zone the server runs
+  /// in. Which calendar day "today" *is* gets decided once, in dates.ts, from
+  /// the owning user's timezone — never from the server clock's own zone.
+  measuredOn DateTime @db.Date
+
+  /// Grams, as an integer.
+  ///
+  /// Integer because a float weight is a decimal library or a rounding bug, and
+  /// neither is worth it. Grams rather than tenths-of-a-pound because it is a
+  /// real unit that reads unambiguously in the database — and because it makes
+  /// the pound/kilogram preference a display concern rather than a migration.
+  /// units.test.ts proves the round trip is exact at display precision in both.
+  grams Int
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// Scoped to the user, deliberately. A bare `@unique` on measuredOn would let
+  /// whoever logged first that day block everybody else — the kind of bug that
+  /// only appears once a second person exists.
+  @@unique([userId, measuredOn])
+}
+
+/// Per-person weight preferences. The row is optional: absent means defaults,
+/// so reading a dashboard never has to write anything.
+model WeightSettings {
+  userId String @id
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  unit WeightUnit @default(lb)
+
+  /// Target rate of change in grams per week. Signed — positive is gain.
+  /// Default is 227 g ≈ 0.5 lb/week.
+  targetRateG Int @default(227)
+
+  updatedAt DateTime @updatedAt
+}

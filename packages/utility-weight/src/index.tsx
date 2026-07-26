@@ -1,42 +1,34 @@
 import type { AuthEnv } from "@platform/auth";
-import { Layout } from "@platform/ui";
 import { defineUtility } from "@platform/utility-kit";
 import { Hono } from "hono";
+import { createDailyRoutes } from "./routes/daily.tsx";
+import { createHistoryRoutes } from "./routes/history.tsx";
+import { createMetricsRoutes } from "./routes/metrics.tsx";
+import { createSettingsRoutes } from "./routes/settings.tsx";
 
 /**
- * 🛑 PLACEHOLDER — DO NOT BUILD THIS OUT.
+ * Weight tracking.
  *
- * The weight utility has a specific design that has not been provided yet.
- * Its data model, calculations and views are all undecided, and an earlier
- * speculative sketch was deliberately removed from docs/architecture.md so it
- * could not be mistaken for direction.
+ * The shape follows how it actually gets used: `/weight` is the daily gesture
+ * and the page worth bookmarking, and the other three are where you go when you
+ * want to look rather than record.
  *
- * What this file is for: proving the platform contract end to end — registry,
- * mounting, session gate, directory listing — without committing to a single
- * product decision. It queries nothing, so it also has no Prisma models yet.
- *
- * When direction arrives: add the models to packages/db/prisma/schema/weight.prisma,
- * a repository that reaches the database only through db(), pure analytics with
- * their own tests, and the routes. Not before.
+ * Everything here runs behind the session gate, so these are the first routes in
+ * the platform permitted to touch the database. The public surface still issues
+ * zero queries — including the login flow, which authorises against the
+ * environment rather than a users table precisely so that stays true.
  */
-
 const routes = new Hono<AuthEnv>();
 
-routes.get("/", (c) =>
-  c.html(
-    <Layout title="weight">
-      <p>Nothing here yet.</p>
-      <p class="mt-4 text-muted">
-        This utility is a placeholder. It exists to prove the plumbing — it is mounted, gated and
-        listed like any other, and does nothing else.
-      </p>
-    </Layout>,
-  ),
-);
+// The more specific mounts go first; "/" would otherwise swallow them.
+routes.route("/history", createHistoryRoutes());
+routes.route("/metrics", createMetricsRoutes());
+routes.route("/settings", createSettingsRoutes());
+routes.route("/", createDailyRoutes());
 
 export default defineUtility({
   slug: "weight",
   name: "weight",
-  blurb: "placeholder",
+  blurb: "daily weigh-ins, weekly rates",
   routes,
 });

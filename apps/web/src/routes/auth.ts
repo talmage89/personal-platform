@@ -13,7 +13,7 @@ import {
   stateCookieName,
   stateCookieOptions,
 } from "@platform/auth";
-import type { Env as PlatformEnv } from "@platform/core";
+import { allowedGitHubIds, type Env as PlatformEnv } from "@platform/core";
 import { type Context, Hono } from "hono";
 import { getConnInfo } from "hono/bun";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
@@ -59,6 +59,7 @@ export function createAuthRoutes(env: PlatformEnv) {
   const secure = env.NODE_ENV === "production";
   const trustProxy = env.NODE_ENV === "production";
   const limiter = createRateLimiter(RATE_LIMIT);
+  const allowed = allowedGitHubIds(env);
 
   const oauth: OAuthConfig | null =
     env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET
@@ -119,7 +120,7 @@ export function createAuthRoutes(env: PlatformEnv) {
     if (!token) return c.redirect("/", 302);
 
     const githubId = await fetchGitHubUserId(token);
-    if (!githubId || githubId !== env.ALLOWED_GITHUB_ID) return c.redirect("/", 302);
+    if (!githubId || !allowed.includes(githubId)) return c.redirect("/", 302);
 
     const session = await signSession(githubId, env.SESSION_SECRET);
     setCookie(c, sessionCookieName(secure), session, sessionCookieOptions(secure));

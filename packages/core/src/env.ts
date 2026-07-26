@@ -46,7 +46,14 @@ const schema = z
     // these are filled in; a production deploy without them refuses to boot.
     GITHUB_CLIENT_ID: z.string().min(1).optional(),
     GITHUB_CLIENT_SECRET: z.string().min(1).optional(),
-    ALLOWED_GITHUB_ID: z.string().regex(/^\d+$/, "must be a numeric GitHub user id").optional(),
+
+    // One or more numeric ids, comma-separated. Staying an environment check
+    // rather than becoming a lookup is the reason login touches no database —
+    // supporting several people must not cost that guarantee.
+    ALLOWED_GITHUB_ID: z
+      .string()
+      .regex(/^\d+(?:\s*,\s*\d+)*$/, "must be numeric GitHub user ids, comma-separated")
+      .optional(),
   })
   .superRefine((value, ctx) => {
     if (value.NODE_ENV !== "production") return;
@@ -99,6 +106,17 @@ function parse(raw: Record<string, string | undefined>): Env {
     .join("\n");
 
   throw new Error(`Invalid environment:\n${detail}\n\nSee .env.example.`);
+}
+
+/**
+ * The GitHub ids permitted to sign in. A single id stays valid, so an existing
+ * deployment keeps working unchanged.
+ */
+export function allowedGitHubIds(e: Env = env()): string[] {
+  if (!e.ALLOWED_GITHUB_ID) return [];
+  return e.ALLOWED_GITHUB_ID.split(",")
+    .map((id) => id.trim())
+    .filter(Boolean);
 }
 
 export const isProduction = (e: Env = env()): boolean => e.NODE_ENV === "production";

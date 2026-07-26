@@ -1,0 +1,33 @@
+// Platform-level models — things that are true of a person, not of a utility.
+
+/// Someone who can sign in.
+///
+/// Note what this table is *not* used for: logging in. Authorisation is an
+/// allowlist check against the environment, so the entire OAuth flow still
+/// issues zero queries and a bot hammering /auth/* cannot wake the database.
+/// A row here is created lazily, on the first authenticated request that needs
+/// one, already behind the session gate. See docs/architecture.md.
+model User {
+  id String @id @default(uuid(7))
+
+  /// GitHub's numeric id — the value the session carries. Never the username:
+  /// usernames can be changed and reclaimed, ids cannot.
+  githubId String @unique
+
+  /// IANA zone name. Decides which calendar day an action belongs to.
+  ///
+  /// It lives on the user rather than on any one utility's settings because it
+  /// is a fact about a person, not about weight — the next utility that cares
+  /// what "today" means should read the same value rather than ask again.
+  timezone String @default("UTC")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Prisma requires both halves of a relation to be declared, so adding a
+  // utility with user-owned rows means touching this model too. That is a
+  // limitation of modular schemas, not a design intent — the dependency is
+  // meant to run the other way.
+  weightEntries  WeightEntry[]
+  weightSettings WeightSettings?
+}
