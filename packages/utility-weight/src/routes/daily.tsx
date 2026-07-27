@@ -40,7 +40,7 @@ export function createDailyRoutes() {
             {formatDay(today)}
           </label>
 
-          <div class="mt-1 flex items-baseline gap-2">
+          <div class="mt-2 flex items-baseline gap-3">
             <input
               id="weight"
               name="weight"
@@ -53,47 +53,51 @@ export function createDailyRoutes() {
               autofocus
               value={todays ? formatWeight(todays.grams, settings.unit) : ""}
               placeholder="—"
-              class="w-40 border-b bg-transparent pb-1 text-4xl outline-none"
+              class="w-40 border-b bg-transparent pb-1 text-4xl tabular-nums outline-none"
             />
             <span class="text-muted text-xl">{unitLabel(settings.unit)}</span>
-            <button type="submit" class="ml-2 cursor-pointer underline hover:no-underline">
+            <button type="submit" class="ml-4 cursor-pointer underline hover:no-underline">
               {todays ? "update" : "save"}
             </button>
           </div>
         </form>
 
         {invalid ? (
-          <p class="mt-2 text-sm">
+          <p class="mt-4 text-sm">
             That did not look like a weight in {unitLabel(settings.unit)}. Nothing was saved.
           </p>
         ) : null}
-        {saved && !invalid ? <p class="mt-2 text-muted text-sm">saved</p> : null}
+        {saved && !invalid ? <p class="mt-4 text-muted text-sm">saved</p> : null}
         {todays && !saved && !invalid ? (
-          <p class="mt-2 text-muted text-sm">Already logged today. Changing it replaces it.</p>
+          <p class="mt-4 text-muted text-sm">Already logged today. Changing it replaces it.</p>
         ) : null}
 
         <hr class="my-8" />
 
-        <div class="grid grid-cols-2 gap-6">
+        <div class="grid grid-cols-2 gap-x-8 gap-y-8">
           <Stat
             label="7-day average"
             large
             value={
               comparison.current.mean === null
                 ? "—"
-                : `${formatWeight(comparison.current.mean, settings.unit)} ${unitLabel(settings.unit)}`
+                : formatWeight(comparison.current.mean, settings.unit)
             }
+            unit={comparison.current.mean === null ? undefined : unitLabel(settings.unit)}
             detail={`${comparison.current.n}/7 days logged`}
           />
           <Stat
             label="vs previous 7 days"
             large
-            value={
-              comparison.deltaG === null
-                ? "—"
-                : `${formatDelta(comparison.deltaG, settings.unit)} ${rateLabel(settings.unit)}`
-            }
+            value={comparison.deltaG === null ? "—" : formatDelta(comparison.deltaG, settings.unit)}
+            unit={comparison.deltaG === null ? undefined : rateLabel(settings.unit)}
             detail={`${comparison.previous.n}/7 days logged`}
+          />
+          <Stat
+            label="target"
+            value={formatDelta(settings.targetRateG, settings.unit)}
+            unit={rateLabel(settings.unit)}
+            detail={pace ? paceLabel(pace.status) : undefined}
           />
         </div>
 
@@ -103,15 +107,7 @@ export function createDailyRoutes() {
           previousN={comparison.previous.n}
         />
 
-        <div class="mt-6">
-          <Stat
-            label="target"
-            value={`${formatDelta(settings.targetRateG, settings.unit)} ${rateLabel(settings.unit)}`}
-            detail={pace ? paceLabel(pace.status) : undefined}
-          />
-        </div>
-
-        <p class="mt-8 text-sm">
+        <p class="mt-10 text-sm">
           <a href="/weight/metrics">everything else →</a>
         </p>
       </WeightPage>,

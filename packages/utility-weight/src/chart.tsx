@@ -98,10 +98,10 @@ export function Chart({ points, trend, target, from, to, unit }: ChartProps) {
             stroke-width="1"
           />
           <text
-            x={PLOT.left - 8}
+            x={PLOT.left - 10}
             y={round(toY(value)) + 4}
             text-anchor="end"
-            font-size="11"
+            font-size="12"
             fill="currentColor"
             fill-opacity="0.55"
           >
@@ -154,7 +154,7 @@ export function Chart({ points, trend, target, from, to, unit }: ChartProps) {
           x={round(toX(day))}
           y={HEIGHT - 8}
           text-anchor={anchor}
-          font-size="11"
+          font-size="12"
           fill="currentColor"
           fill-opacity="0.55"
         >

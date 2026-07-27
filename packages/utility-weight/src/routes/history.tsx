@@ -52,9 +52,9 @@ export function createHistoryRoutes() {
 
     return c.html(
       <WeightPage current="history">
-        <form method="get" action="/weight/history" class="mb-6 text-sm">
+        <form method="get" action="/weight/history" class="mb-8 flex items-baseline gap-3 text-sm">
           <label for="end" class="text-muted">
-            ending{" "}
+            ending
           </label>
           <input
             id="end"
@@ -62,15 +62,15 @@ export function createHistoryRoutes() {
             type="date"
             value={end}
             max={today}
-            class="border-b bg-transparent"
+            class="border-b bg-transparent pb-0.5"
           />
-          <button type="submit" class="ml-2 cursor-pointer underline hover:no-underline">
+          <button type="submit" class="ml-1 cursor-pointer underline hover:no-underline">
             go
           </button>
         </form>
 
         {saved || removed || rejected ? (
-          <p class="mb-4 text-muted text-sm">
+          <p class="mb-6 text-muted text-sm">
             {[
               saved ? `${saved} saved` : null,
               removed ? `${removed} removed` : null,
@@ -82,18 +82,20 @@ export function createHistoryRoutes() {
         ) : null}
 
         <form method="post" action={`/weight/history?end=${end}`}>
-          <table class="w-full">
+          {/* Capped so the day and the field it belongs to stay near each other.
+              Across the full 640px column they read as two unrelated lists. */}
+          <table class="w-full max-w-sm">
             <tbody>
               {days.map((day) => {
                 const grams = byDay.get(day);
                 return (
                   <tr key={day}>
-                    <td class="py-1 pr-4 text-sm">
+                    <td class="w-full py-1.5 pr-8 text-sm">
                       <span class={grams === undefined ? "text-muted" : ""}>
                         {relativeDay(day, today)}
                       </span>
                     </td>
-                    <td class="py-1">
+                    <td class="py-1.5">
                       <input
                         name={`day:${day}`}
                         type="text"
@@ -101,25 +103,25 @@ export function createHistoryRoutes() {
                         autocomplete="off"
                         aria-label={formatDay(day)}
                         value={grams === undefined ? "" : formatWeight(grams, settings.unit)}
-                        class="w-24 border-b bg-transparent pb-0.5 text-right"
+                        class="w-24 border-b bg-transparent pb-0.5 text-right tabular-nums"
                       />
-                      <span class="ml-1 text-muted text-sm">{unitLabel(settings.unit)}</span>
                     </td>
+                    <td class="py-1.5 pl-3 text-muted text-sm">{unitLabel(settings.unit)}</td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
 
-          <div class="mt-6">
+          <div class="mt-8">
             <button type="submit" class="cursor-pointer underline hover:no-underline">
               save changes
             </button>
-            <span class="ml-3 text-muted text-sm">clear a field to remove that day's entry</span>
+            <p class="mt-2 text-muted text-sm">clear a field to remove that day's entry</p>
           </div>
         </form>
 
-        <nav class="mt-8 flex justify-between text-sm">
+        <nav class="mt-10 flex justify-between text-sm">
           <a href={`/weight/history?end=${addDays(start, -1)}`}>← earlier</a>
           {daysBetween(end, today) > 0 ? (
             <a href={`/weight/history?end=${laterEnd(end, today)}`}>later →</a>

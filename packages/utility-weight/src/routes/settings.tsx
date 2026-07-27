@@ -34,11 +34,11 @@ export function createSettingsRoutes() {
           */}
           <input type="hidden" name="renderedUnit" value={settings.unit} />
 
-          <div class="mb-6">
+          <div class="mb-8">
             <label for="unit" class="text-muted text-sm">
               units
             </label>
-            <div>
+            <div class="mt-1">
               <select id="unit" name="unit" class="border-b bg-transparent py-1">
                 {UNITS.map((unit) => (
                   <option key={unit} value={unit} selected={unit === settings.unit}>
@@ -49,11 +49,11 @@ export function createSettingsRoutes() {
             </div>
           </div>
 
-          <div class="mb-6">
+          <div class="mb-8">
             <label for="targetRate" class="text-muted text-sm">
               target rate
             </label>
-            <div class="flex items-baseline gap-2">
+            <div class="mt-1 flex items-baseline gap-3">
               <input
                 id="targetRate"
                 name="targetRate"
@@ -61,20 +61,20 @@ export function createSettingsRoutes() {
                 inputmode="decimal"
                 autocomplete="off"
                 value={formatRateInput(settings.targetRateG, settings.unit)}
-                class="w-24 border-b bg-transparent py-1"
+                class="w-24 border-b bg-transparent py-1 tabular-nums"
               />
               <span class="text-muted text-sm">{rateLabel(settings.unit)}</span>
             </div>
-            <p class="mt-1 text-muted text-sm">
+            <p class="mt-2 text-muted text-sm">
               Positive to gain, negative to lose, zero to maintain.
             </p>
           </div>
 
-          <div class="mb-6">
+          <div class="mb-8">
             <label for="timezone" class="text-muted text-sm">
               timezone
             </label>
-            <div>
+            <div class="mt-1">
               <select id="timezone" name="timezone" class="max-w-full border-b bg-transparent py-1">
                 {zones.map((zone) => (
                   <option key={zone} value={zone} selected={zone === user.timezone}>
@@ -83,16 +83,18 @@ export function createSettingsRoutes() {
                 ))}
               </select>
             </div>
-            <p class="mt-1 text-muted text-sm">
+            <p class="mt-2 text-muted text-sm">
               Decides which day a weigh-in belongs to. Right now that is {today}.
             </p>
           </div>
 
-          <button type="submit" class="cursor-pointer underline hover:no-underline">
-            save
-          </button>
-          {saved ? <span class="ml-3 text-muted text-sm">saved</span> : null}
-          {invalid ? <span class="ml-3 text-sm">{invalidMessage(invalid)}</span> : null}
+          <div class="mt-10">
+            <button type="submit" class="cursor-pointer underline hover:no-underline">
+              save
+            </button>
+            {saved ? <span class="ml-4 text-muted text-sm">saved</span> : null}
+            {invalid ? <span class="ml-4 text-sm">{invalidMessage(invalid)}</span> : null}
+          </div>
         </form>
       </WeightPage>,
     );

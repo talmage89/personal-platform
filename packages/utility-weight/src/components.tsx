@@ -21,7 +21,7 @@ const PAGES: { page: Page; href: string; label: string }[] = [
 export function WeightPage({ current, children }: PropsWithChildren<{ current: Page }>) {
   return (
     <Layout title="weight">
-      <nav class="mb-6 text-sm">
+      <nav class="mb-8 text-sm">
         {PAGES.map(({ page, href, label }, index) => (
           <span key={page}>
             {index > 0 ? <span class="text-muted"> · </span> : null}
@@ -38,23 +38,49 @@ export function WeightPage({ current, children }: PropsWithChildren<{ current: P
   );
 }
 
-/** A labelled number. The dashboard is mostly made of these. */
+/**
+ * A ruled block with a heading. Every section below the fold on metrics opens
+ * with one, so the rhythm between rule, heading and content is decided here
+ * rather than re-typed — which is how it drifted in the first place.
+ */
+export function Section({ title, children }: PropsWithChildren<{ title: string }>) {
+  return (
+    <section>
+      <hr class="my-8" />
+      <h2 class="mb-3">{title}</h2>
+      {children}
+    </section>
+  );
+}
+
+/**
+ * A labelled number. The dashboard is mostly made of these.
+ *
+ * The unit is a separate prop rather than part of `value` so the two can be
+ * sized and coloured apart — the number is the thing being read, "lb/wk" is
+ * only there to say what it counts.
+ */
 export function Stat({
   label,
   value,
+  unit,
   detail,
   large = false,
 }: {
   label: string;
   value: string;
+  unit?: string;
   detail?: string;
   large?: boolean;
 }) {
   return (
     <div>
       <div class="text-muted text-sm">{label}</div>
-      <div class={large ? "text-3xl" : ""}>{value}</div>
-      {detail ? <div class="text-muted text-sm">{detail}</div> : null}
+      <div class={`mt-1 flex items-baseline gap-2 ${large ? "text-3xl leading-tight" : ""}`}>
+        <span class="tabular-nums">{value}</span>
+        {unit ? <span class={`text-muted ${large ? "text-lg" : "text-sm"}`}>{unit}</span> : null}
+      </div>
+      {detail ? <div class="mt-1.5 text-muted text-sm">{detail}</div> : null}
     </div>
   );
 }
@@ -78,7 +104,7 @@ export function ConfidenceNote({
   if (confidence === "good") return null;
 
   return (
-    <p class="mt-2 text-muted text-sm">
+    <p class="mt-4 text-muted text-sm">
       {confidence === "none"
         ? "Not enough history yet to compare two weeks."
         : `Based on ${currentN} and ${previousN} readings — thin enough that day-to-day water

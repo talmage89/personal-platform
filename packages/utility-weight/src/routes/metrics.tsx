@@ -15,7 +15,7 @@ import {
   weekOverWeek,
 } from "../analytics.ts";
 import { Chart } from "../chart.tsx";
-import { ConfidenceNote, Stat, sessionOf, WeightPage } from "../components.tsx";
+import { ConfidenceNote, Section, Stat, sessionOf, WeightPage } from "../components.tsx";
 import { addDays, type DateKey, daysBetween, formatShort } from "../dates.ts";
 import { allEntries, loadContext } from "../repository.ts";
 import { formatDelta, formatWeight, rateLabel, unitLabel } from "../units.ts";
@@ -90,25 +90,21 @@ export function createMetricsRoutes() {
 
     return c.html(
       <WeightPage current="metrics">
-        <div class="grid grid-cols-2 gap-6">
+        <div class="grid grid-cols-2 gap-x-8 gap-y-8">
           <Stat
             label="7-day average"
             large
             value={
-              comparison.current.mean === null
-                ? "—"
-                : `${formatWeight(comparison.current.mean, unit)} ${unitLabel(unit)}`
+              comparison.current.mean === null ? "—" : formatWeight(comparison.current.mean, unit)
             }
+            unit={comparison.current.mean === null ? undefined : unitLabel(unit)}
             detail={`${comparison.current.n}/7 days logged`}
           />
           <Stat
             label="vs previous 7 days"
             large
-            value={
-              comparison.deltaG === null
-                ? "—"
-                : `${formatDelta(comparison.deltaG, unit)} ${rateLabel(unit)}`
-            }
+            value={comparison.deltaG === null ? "—" : formatDelta(comparison.deltaG, unit)}
+            unit={comparison.deltaG === null ? undefined : rateLabel(unit)}
             detail={
               pace
                 ? `target ${formatDelta(targetRateG, unit)} · ${paceLabel(pace.status)}`
@@ -125,32 +121,36 @@ export function createMetricsRoutes() {
 
         <hr class="my-8" />
 
-        <nav class="mb-1 text-sm">
-          {(Object.keys(RANGES) as RangeKey[]).map((key, index) => (
-            <span key={key}>
-              {index > 0 ? <span class="text-muted"> · </span> : null}
-              {key === range ? (
-                <span class="text-muted">{key}</span>
-              ) : (
-                <a href={`/weight/metrics?range=${key}`}>{key}</a>
-              )}
-            </span>
-          ))}
-        </nav>
+        {/* Range and granularity are separate choices, so they sit at opposite
+            ends of the row rather than stacked where they read as one list. */}
+        <div class="mb-5 flex flex-wrap items-baseline justify-between gap-x-8 gap-y-2 text-sm">
+          <nav>
+            {(Object.keys(RANGES) as RangeKey[]).map((key, index) => (
+              <span key={key}>
+                {index > 0 ? <span class="text-muted"> · </span> : null}
+                {key === range ? (
+                  <span class="text-muted">{key}</span>
+                ) : (
+                  <a href={`/weight/metrics?range=${key}`}>{key}</a>
+                )}
+              </span>
+            ))}
+          </nav>
 
-        <nav class="mb-4 text-muted text-sm">
-          by{" "}
-          {GRANULARITIES.map((option, index) => (
-            <span key={option}>
-              {index > 0 ? <span> · </span> : null}
-              {option === by ? (
-                <span>{option}</span>
-              ) : (
-                <a href={`/weight/metrics?range=${range}&by=${option}`}>{option}</a>
-              )}
-            </span>
-          ))}
-        </nav>
+          <nav class="text-muted">
+            by{" "}
+            {GRANULARITIES.map((option, index) => (
+              <span key={option}>
+                {index > 0 ? <span> · </span> : null}
+                {option === by ? (
+                  <span>{option}</span>
+                ) : (
+                  <a href={`/weight/metrics?range=${range}&by=${option}`}>{option}</a>
+                )}
+              </span>
+            ))}
+          </nav>
+        </div>
 
         <Chart
           points={points}
@@ -160,136 +160,134 @@ export function createMetricsRoutes() {
           to={today}
           unit={unit}
         />
-        <p class="mt-1 text-muted text-sm">
+        <p class="mt-4 text-muted text-sm">
           Dots are readings; the line is a trailing 7-day average. The dashed line is where the
           target rate would have taken you.
         </p>
 
-        <hr class="my-8" />
-
-        <h2>rates</h2>
-        <table class="mt-2 w-full text-sm">
-          <tbody>
-            <Row
-              label="this week vs last"
-              value={
-                comparison.deltaG === null
-                  ? "—"
-                  : `${formatDelta(comparison.deltaG, unit)} ${rateLabel(unit)}`
-              }
-              detail={`${comparison.current.n} and ${comparison.previous.n} readings`}
-            />
-            <Row
-              label="last 4 weeks, averaged"
-              value={monthly === null ? "—" : `${formatDelta(monthly, unit)} ${rateLabel(unit)}`}
-              detail="mean of the weekly steps"
-            />
-            {fits.map(({ label, trend: fit }) => (
+        <Section title="rates">
+          <table class="w-full text-sm">
+            <tbody>
               <Row
-                key={label}
-                label={label}
-                value={fit ? `${formatDelta(fit.ratePerWeekG, unit)} ${rateLabel(unit)}` : "—"}
-                detail={fit ? `${fit.n} readings · r² ${fit.r2.toFixed(2)}` : "not enough data"}
+                label="this week vs last"
+                value={comparison.deltaG === null ? "—" : formatDelta(comparison.deltaG, unit)}
+                unit={comparison.deltaG === null ? undefined : rateLabel(unit)}
+                detail={`${comparison.current.n} and ${comparison.previous.n} readings`}
               />
-            ))}
-            <Row
-              label="target"
-              value={`${formatDelta(targetRateG, unit)} ${rateLabel(unit)}`}
-              detail={pace ? `${formatDelta(pace.diffG, unit)} against it` : undefined}
-            />
-          </tbody>
-        </table>
+              <Row
+                label="last 4 weeks, averaged"
+                value={monthly === null ? "—" : formatDelta(monthly, unit)}
+                unit={monthly === null ? undefined : rateLabel(unit)}
+                detail="mean of the weekly steps"
+              />
+              {fits.map(({ label, trend: fit }) => (
+                <Row
+                  key={label}
+                  label={label}
+                  value={fit ? formatDelta(fit.ratePerWeekG, unit) : "—"}
+                  unit={fit ? rateLabel(unit) : undefined}
+                  detail={fit ? `${fit.n} readings · r² ${fit.r2.toFixed(2)}` : "not enough data"}
+                />
+              ))}
+              <Row
+                label="target"
+                value={formatDelta(targetRateG, unit)}
+                unit={rateLabel(unit)}
+                detail={pace ? `${formatDelta(pace.diffG, unit)} against it` : undefined}
+              />
+            </tbody>
+          </table>
 
-        <p class="mt-2 text-muted text-sm">
-          The week-over-week figure is the one to act on day to day, but it is also the noisiest —
-          it rests on two averages of about seven readings each. The 30-day fit uses every reading
-          and moves less; when they disagree, the fit is usually closer to the truth.
-        </p>
+          <p class="mt-5 text-muted text-sm">
+            The week-over-week figure is the one to act on day to day, but it is also the noisiest —
+            it rests on two averages of about seven readings each. The 30-day fit uses every reading
+            and moves less; when they disagree, the fit is usually closer to the truth.
+          </p>
+        </Section>
 
-        <hr class="my-8" />
-
-        <h2>weeks</h2>
-        <table class="mt-2 w-full text-sm">
-          <thead>
-            <tr class="text-muted">
-              <th class="text-left font-normal">ending</th>
-              <th class="text-right font-normal">average</th>
-              <th class="text-right font-normal">change</th>
-              <th class="text-right font-normal">logged</th>
-            </tr>
-          </thead>
-          <tbody>
-            {buckets.map((bucket) => (
-              <tr key={bucket.to}>
-                <td class="py-0.5">{formatShort(bucket.to)}</td>
-                <td class="py-0.5 text-right">
-                  {bucket.mean === null ? "—" : formatWeight(bucket.mean, unit)}
-                </td>
-                <td class="py-0.5 text-right">
-                  {bucket.deltaG === null ? "—" : formatDelta(bucket.deltaG, unit)}
-                </td>
-                <td class="py-0.5 text-right text-muted">{bucket.n}/7</td>
+        <Section title="weeks">
+          {/* Capped rather than full width: four short columns spread across the
+              whole column read as four separate lists rather than one table. */}
+          <table class="w-full max-w-md text-sm">
+            <thead>
+              <tr class="text-muted">
+                <th class="pr-6 pb-2 text-left font-normal">ending</th>
+                <th class="pb-2 pl-4 text-right font-normal">average</th>
+                <th class="pb-2 pl-4 text-right font-normal">change</th>
+                <th class="pb-2 pl-4 text-right font-normal">logged</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {buckets.map((bucket) => (
+                <tr key={bucket.to}>
+                  <td class="py-1 pr-6">{formatShort(bucket.to)}</td>
+                  <td class="py-1 pl-4 text-right tabular-nums">
+                    {bucket.mean === null ? "—" : formatWeight(bucket.mean, unit)}
+                  </td>
+                  <td class="py-1 pl-4 text-right tabular-nums">
+                    {bucket.deltaG === null ? "—" : formatDelta(bucket.deltaG, unit)}
+                  </td>
+                  <td class="py-1 pl-4 text-right text-muted tabular-nums">{bucket.n}/7</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Section>
 
-        <hr class="my-8" />
-
-        <h2>range · {range}</h2>
-        <table class="mt-2 w-full text-sm">
-          <tbody>
-            <Row
-              label="logged"
-              value={`${summary.n} of ${summary.span} days`}
-              detail={`${Math.round(summary.coverage * 100)}% coverage`}
-            />
-            <Row
-              label="net change"
-              value={
-                summary.changeG === null
-                  ? "—"
-                  : `${formatDelta(summary.changeG, unit)} ${unitLabel(unit)}`
-              }
-              detail={
-                summary.first && summary.last
-                  ? `${formatWeight(summary.first.grams, unit)} → ${formatWeight(summary.last.grams, unit)}`
-                  : undefined
-              }
-            />
-            <Row
-              label="lightest"
-              value={summary.lightest ? formatWeight(summary.lightest.grams, unit) : "—"}
-              detail={summary.lightest ? formatShort(summary.lightest.day) : undefined}
-            />
-            <Row
-              label="heaviest"
-              value={summary.heaviest ? formatWeight(summary.heaviest.grams, unit) : "—"}
-              detail={summary.heaviest ? formatShort(summary.heaviest.day) : undefined}
-            />
-          </tbody>
-        </table>
+        <Section title={`range · ${range}`}>
+          <table class="w-full text-sm">
+            <tbody>
+              <Row
+                label="logged"
+                value={`${summary.n} / ${summary.span}`}
+                unit="days"
+                detail={`${Math.round(summary.coverage * 100)}% coverage`}
+              />
+              <Row
+                label="net change"
+                value={summary.changeG === null ? "—" : formatDelta(summary.changeG, unit)}
+                unit={summary.changeG === null ? undefined : unitLabel(unit)}
+                detail={
+                  summary.first && summary.last
+                    ? `${formatWeight(summary.first.grams, unit)} → ${formatWeight(summary.last.grams, unit)}`
+                    : undefined
+                }
+              />
+              <Row
+                label="lightest"
+                value={summary.lightest ? formatWeight(summary.lightest.grams, unit) : "—"}
+                unit={summary.lightest ? unitLabel(unit) : undefined}
+                detail={summary.lightest ? formatShort(summary.lightest.day) : undefined}
+              />
+              <Row
+                label="heaviest"
+                value={summary.heaviest ? formatWeight(summary.heaviest.grams, unit) : "—"}
+                unit={summary.heaviest ? unitLabel(unit) : undefined}
+                detail={summary.heaviest ? formatShort(summary.heaviest.day) : undefined}
+              />
+            </tbody>
+          </table>
+        </Section>
 
         {comparison.current.mean !== null && steadiest ? (
-          <>
-            <hr class="my-8" />
-            <h2>if the 30-day rate holds</h2>
-            <table class="mt-2 w-full text-sm">
+          <Section title="if the 30-day rate holds">
+            <table class="w-full text-sm">
               <tbody>
                 {[4, 12, 26].map((weeks) => (
                   <Row
                     key={weeks}
                     label={`in ${weeks} weeks`}
-                    value={`${formatWeight(
+                    value={formatWeight(
                       project(comparison.current.mean as number, steadiest.ratePerWeekG, weeks),
                       unit,
-                    )} ${unitLabel(unit)}`}
+                    )}
+                    unit={unitLabel(unit)}
                     detail={formatShort(addDays(today, weeks * 7))}
                   />
                 ))}
               </tbody>
             </table>
-          </>
+          </Section>
         ) : null}
       </WeightPage>,
     );
@@ -298,12 +296,35 @@ export function createMetricsRoutes() {
   return routes;
 }
 
-function Row({ label, value, detail }: { label: string; value: string; detail?: string }) {
+/**
+ * One line of a metrics table: what it is, the number, what the number counts,
+ * and the caveat.
+ *
+ * The unit is its own cell rather than part of `value` for two reasons: the
+ * digits then right-align against each other instead of against a trailing
+ * "lb/wk", and a table mixing "lb" with "days" still lines its numbers up. The
+ * detail cell takes the slack so the first three hug the left rather than
+ * drifting apart across a 640px column.
+ */
+function Row({
+  label,
+  value,
+  unit,
+  detail,
+}: {
+  label: string;
+  value: string;
+  unit?: string;
+  detail?: string;
+}) {
   return (
     <tr>
-      <td class="py-0.5 pr-4">{label}</td>
-      <td class="py-0.5 text-right">{value}</td>
-      <td class="py-0.5 pl-4 text-muted">{detail ?? ""}</td>
+      <td class="whitespace-nowrap py-1.5 pr-4 align-top sm:pr-8">{label}</td>
+      <td class="whitespace-nowrap py-1.5 text-right align-top tabular-nums">{value}</td>
+      <td class="whitespace-nowrap py-1.5 pl-2 align-top text-muted">{unit ?? ""}</td>
+      {/* align-top throughout so that when a detail wraps on a narrow screen the
+          number stays level with its label instead of drifting to the middle. */}
+      <td class="w-full py-1.5 pl-4 align-top text-muted sm:pl-8">{detail ?? ""}</td>
     </tr>
   );
 }
