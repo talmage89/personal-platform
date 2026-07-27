@@ -1,5 +1,14 @@
 @import "tailwindcss";
 
+/*
+ * Tailwind's automatic source detection starts at the nearest module boundary —
+ * apps/web — and skips node_modules, which is where the workspace packages are
+ * symlinked. Without these, every class in packages/ui and packages/utility-*
+ * is silently dropped from the build and those pages render unstyled. The glob
+ * is deliberate: a new utility package is picked up with no change here.
+ */
+@source "../../../packages/*/src/**/*.{ts,tsx}";
+
 @font-face {
   font-family: "Switzer";
   src: url("/fonts/switzer-400.woff2") format("woff2");
