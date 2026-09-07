@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { AgentConfig } from "./config.ts";
-import { chat, type ToolSpec } from "./openrouter.ts";
+import { chat, OpenRouterError, type ToolSpec } from "./openrouter.ts";
 
 /**
  * The loop is the part of this package that can spend money without anyone
@@ -186,6 +186,27 @@ describe("the tool loop", () => {
       maxToolCalls: 0,
     });
     expect(bodies[0]?.tools).toBeUndefined();
+  });
+
+  test("an aborted request becomes an OpenRouterError, not a raw DOMException", async () => {
+    // The degradation path in narrate.ts keys on OpenRouterError. An AbortError
+    // escaping as itself took the whole run down and lost the arithmetic with
+    // it, which is exactly what that path exists to prevent.
+    globalThis.fetch = (async () => {
+      const error = new Error("aborted");
+      error.name = "AbortError";
+      throw error;
+    }) as typeof fetch;
+
+    let caught: unknown;
+    try {
+      await chat(config, { model: "m", system: "s", user: "u", maxTokens: 100 });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(OpenRouterError);
+    expect((caught as OpenRouterError).message).toContain("timed out");
   });
 
   test("every request is tagged so the reader can exclude it", async () => {

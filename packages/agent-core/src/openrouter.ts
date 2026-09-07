@@ -12,7 +12,7 @@ import type { AgentConfig } from "./config.ts";
 const ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
 
 /** Ceiling on one exchange, tool round-trips included. */
-const REQUEST_TIMEOUT_MS = 180_000;
+const REQUEST_TIMEOUT_MS = 300_000;
 
 export interface ToolSpec {
   name: string;
@@ -165,6 +165,16 @@ export async function chat(config: AgentConfig, options: ChatOptions): Promise<C
         },
         controller.signal,
       );
+    } catch (error) {
+      // An aborted fetch throws a DOMException, not an OpenRouterError, so
+      // without this it escaped the degradation path in narrate.ts entirely and
+      // took the whole run down — losing the arithmetic along with the prose,
+      // which is the one outcome the error handling exists to prevent. A
+      // timeout is reported the same way a 500 is.
+      if (error instanceof Error && error.name === "AbortError") {
+        throw new OpenRouterError(`request timed out after ${REQUEST_TIMEOUT_MS / 1000}s`);
+      }
+      throw error;
     } finally {
       clearTimeout(timer);
     }

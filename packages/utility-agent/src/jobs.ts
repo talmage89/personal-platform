@@ -182,7 +182,11 @@ export async function hourly(): Promise<string> {
  * Takes the hourly summaries as context and recomputes every figure from the
  * source — see rollup.ts for why that distinction is the whole design.
  */
-export async function catchUp(start: Date, end: Date): Promise<StoredSummary> {
+export async function catchUp(
+  start: Date,
+  end: Date,
+  budgetMs = CATCH_UP_BUDGET_MS,
+): Promise<StoredSummary> {
   const [priors, instructions, system] = await Promise.all([
     priorsBetween(start, end),
     promptOverride("recap"),
@@ -192,7 +196,7 @@ export async function catchUp(start: Date, end: Date): Promise<StoredSummary> {
   const summary = await rollup({
     window: { start, end },
     priors,
-    deadline: deadlineIn(CATCH_UP_BUDGET_MS),
+    deadline: deadlineIn(budgetMs),
     linkPath: "/agent",
     ...(instructions ? { instructions } : {}),
     ...(system ? { system } : {}),
@@ -203,6 +207,12 @@ export async function catchUp(start: Date, end: Date): Promise<StoredSummary> {
   await announce(stored);
   return stored;
 }
+
+/**
+ * As a job there is no browser waiting, so the work gets a real budget rather
+ * than one shaped by a request timeout.
+ */
+const CATCH_UP_JOB_BUDGET_MS = 20 * 60_000;
 
 /**
  * A catch-up covering the last day, runnable without a browser.
@@ -217,7 +227,11 @@ export async function catchUpLastDay(): Promise<string> {
   if (!agentConfig()) return "not configured; nothing to do";
 
   const now = new Date();
-  const stored = await catchUp(new Date(now.getTime() - 24 * 3_600_000), now);
+  const stored = await catchUp(
+    new Date(now.getTime() - 24 * 3_600_000),
+    now,
+    CATCH_UP_JOB_BUDGET_MS,
+  );
   const flags = stored.flags.map((f) => f.code).join(",") || "none";
 
   return `caught up ${stored.periodStart.toISOString()}..${stored.periodEnd.toISOString()}: ${stored.callCount} calls, flags=${flags}`;
