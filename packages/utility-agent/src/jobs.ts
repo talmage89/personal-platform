@@ -205,6 +205,25 @@ export async function catchUp(start: Date, end: Date): Promise<StoredSummary> {
 }
 
 /**
+ * A catch-up covering the last day, runnable without a browser.
+ *
+ * The button posts to a request, and a request has a timeout and whatever
+ * memory the service was given. This path is the heaviest thing the utility
+ * does — deep detail, a wide sample, and a tool loop that accumulates every
+ * turn — so it also gets a home where neither of those is a constraint, and
+ * where it can be exercised without a session.
+ */
+export async function catchUpLastDay(): Promise<string> {
+  if (!agentConfig()) return "not configured; nothing to do";
+
+  const now = new Date();
+  const stored = await catchUp(new Date(now.getTime() - 24 * 3_600_000), now);
+  const flags = stored.flags.map((f) => f.code).join(",") || "none";
+
+  return `caught up ${stored.periodStart.toISOString()}..${stored.periodEnd.toISOString()}: ${stored.callCount} calls, flags=${flags}`;
+}
+
+/**
  * Sends a push immediately, whatever the probe schedule says.
  *
  * Exists so the channel can be proved on demand — after rotating a token, or
