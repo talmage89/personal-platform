@@ -30,4 +30,5 @@ model User {
   // meant to run the other way.
   weightEntries  WeightEntry[]
   weightSettings WeightSettings?
+  agentView      AgentView?
 }

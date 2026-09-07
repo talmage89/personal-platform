@@ -1,3 +1,4 @@
+import agent from "@platform/utility-agent";
 import type { Utility } from "@platform/utility-kit";
 import weight from "@platform/utility-weight";
 
@@ -8,4 +9,4 @@ import weight from "@platform/utility-weight";
  * The same array both mounts the routes and renders the directory, so the
  * listing can never drift from what is actually reachable.
  */
-export const utilities: readonly Utility[] = [weight];
+export const utilities: readonly Utility[] = [weight, agent];

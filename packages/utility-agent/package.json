@@ -1,0 +1,22 @@
+{
+  "name": "@platform/utility-agent",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.tsx"
+  },
+  "scripts": {
+    "check:types": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@platform/agent-core": "workspace:*",
+    "@platform/auth": "workspace:*",
+    "@platform/core": "workspace:*",
+    "@platform/db": "workspace:*",
+    "@platform/ui": "workspace:*",
+    "@platform/utility-kit": "workspace:*",
+    "hono": "^4.11.4"
+  }
+}

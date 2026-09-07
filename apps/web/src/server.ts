@@ -1,6 +1,6 @@
 import { type AuthEnv, loadSession, requireSession } from "@platform/auth";
 import type { Env as PlatformEnv } from "@platform/core";
-import { mountUtilities, type Utility } from "@platform/utility-kit";
+import { mountJobs, mountUtilities, type Utility } from "@platform/utility-kit";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { serveStatic } from "hono/bun";
@@ -65,6 +65,12 @@ export function createServer(
   // ---- public surface: no database access permitted below this line ----
   app.route("/", createAuthRoutes(env));
   app.route("/", createHomeRoutes(utilities));
+
+  // Scheduled work, reachable without a session because a scheduler has none.
+  // It sits on the public surface and obeys its rule: the bearer token is
+  // compared before anything else runs, so an unauthenticated request does no
+  // work and issues no query. The perimeter test holds it to that.
+  mountJobs(app, utilities, env.JOB_SECRET);
   // ---- end public surface ----
 
   app.use("/*", requireSession());

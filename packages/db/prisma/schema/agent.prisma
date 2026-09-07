@@ -1,0 +1,66 @@
+// Agent observability utility. One file per utility — see base.prisma.
+
+/// How a summary came to exist. Scheduled windows tile the timeline; a manual
+/// one is a catch-up covering whatever the schedule had not reached yet.
+enum AgentSummaryKind {
+  scheduled
+  manual
+}
+
+/// What the agent did over one bounded window, and what that appeared to mean.
+///
+/// The numeric columns are computed arithmetically and the narrative is written
+/// from them, never the other way round. That ordering is why a stored row can
+/// be treated as a record rather than an impression: every figure here can be
+/// recomputed from the source table and compared.
+model AgentSummary {
+  id String @id @default(uuid(7))
+
+  /// Half-open: `[periodStart, periodEnd)`. Scheduled windows are contiguous,
+  /// so a gap in the sequence means a run was missed — which is a finding
+  /// about the summariser, distinct from a window that was genuinely quiet.
+  periodStart DateTime
+  periodEnd   DateTime
+
+  kind AgentSummaryKind @default(scheduled)
+
+  callCount  Int
+  totalTokens Int
+  errorCount Int
+
+  /// Millionths of a dollar, as an integer — the same reasoning as grams in the
+  /// weight utility. A float cost is a rounding bug waiting to be argued about,
+  /// and a Decimal drags in a runtime for numbers that are only ever summed and
+  /// displayed. The ceiling is a little over $2,100 per window, which is orders
+  /// of magnitude above anything an hour of this agent could plausibly spend.
+  costMicroUsd Int
+
+  /// Median prompt size across the window. Stored because the trailing baseline
+  /// needs it and recomputing it would mean re-reading the raw traces.
+  medianPromptTokens Int
+
+  /// `[{ model, calls, costUsd, totalTokens }]`, ordered by call count.
+  models Json
+
+  /// `[{ code, severity, detail }]` — the deterministic findings.
+  flags Json
+
+  narrative String
+
+  createdAt DateTime @default(now())
+
+  /// Makes a re-run idempotent: replaying the same scheduled window updates the
+  /// row rather than laying a duplicate beside it.
+  @@unique([periodStart, periodEnd, kind])
+  @@index([periodEnd])
+}
+
+/// Where a person had read up to. Drives "summarise since last time".
+model AgentView {
+  userId String @id
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  lastViewedAt DateTime
+
+  updatedAt DateTime @updatedAt
+}

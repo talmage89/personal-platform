@@ -47,6 +47,13 @@ const schema = z
     GITHUB_CLIENT_ID: z.string().min(1).optional(),
     GITHUB_CLIENT_SECRET: z.string().min(1).optional(),
 
+    // Shared secret the scheduler presents to POST /internal/jobs/*. Absent
+    // means the endpoint 404s, which is the right default: a deployment with
+    // no scheduler should expose no schedulable surface at all. Not required in
+    // production because whether this instance is the one running jobs is a
+    // deployment decision, not a correctness one.
+    JOB_SECRET: z.string().min(32, "must be at least 32 characters").optional(),
+
     // One or more numeric ids, comma-separated. Staying an environment check
     // rather than becoming a lookup is the reason login touches no database —
     // supporting several people must not cost that guarantee.

@@ -183,3 +183,88 @@ describe("bot hygiene", () => {
     expect(real.headers.get("location")).toBe(fake.headers.get("location"));
   });
 });
+
+/**
+ * The job endpoint is the only route on the public surface that does real work,
+ * so it gets its own budget check rather than riding on the suite above.
+ *
+ * The agent log configuration is stripped from the ambient environment first.
+ * Bun loads `.env` automatically, so a developer with working credentials in it
+ * would otherwise have the "valid token" case below issue a real BigQuery query
+ * from a unit test — slow, billable, and passing for the wrong reason.
+ */
+describe("scheduled jobs", () => {
+  const SECRET = "j".repeat(48);
+
+  for (const key of [
+    "AGENT_LOGS_PROJECT",
+    "AGENT_LOGS_DATASET",
+    "AGENT_LOGS_TABLE",
+    "AGENT_LOGS_LOCATION",
+    "ANTHROPIC_API_KEY",
+  ]) {
+    delete process.env[key];
+  }
+
+  const withJobs = createServer(
+    parseEnv({
+      NODE_ENV: "test",
+      DB_URL: BLACK_HOLE,
+      SESSION_SECRET: "p".repeat(48),
+      PUBLIC_URL: "http://localhost:8080",
+      GITHUB_CLIENT_ID: "Iv1.test",
+      GITHUB_CLIENT_SECRET: "test-secret",
+      ALLOWED_GITHUB_ID: "583231",
+      JOB_SECRET: SECRET,
+    }),
+  );
+
+  const post = (path: string, token?: string) =>
+    withJobs.request(path, {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+
+  test("an unauthenticated call is rejected without touching the database", async () => {
+    const started = performance.now();
+    const res = await post("/internal/jobs/agent/hourly");
+
+    expect(res.status).toBe(401);
+    expect(performance.now() - started).toBeLessThan(TIMEOUT_MS);
+  });
+
+  test("a wrong token is rejected", async () => {
+    const res = await post("/internal/jobs/agent/hourly", "x".repeat(48));
+    expect(res.status).toBe(401);
+  });
+
+  test("a token of the wrong length is rejected rather than throwing", async () => {
+    // timingSafeEqual throws on a length mismatch; the comparison has to guard
+    // that itself or this request becomes a 500 instead of a 401.
+    const res = await post("/internal/jobs/agent/hourly", "short");
+    expect(res.status).toBe(401);
+  });
+
+  test("a valid token reaches the job", async () => {
+    const res = await post("/internal/jobs/agent/hourly", SECRET);
+
+    // Configuration was stripped above, so the job short-circuits before any
+    // query. That it answers at all is the proof the route is wired.
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("not configured");
+  });
+
+  test("an unknown job is a 404 even with a valid token", async () => {
+    expect((await post("/internal/jobs/agent/nope", SECRET)).status).toBe(404);
+    expect((await post("/internal/jobs/nope/hourly", SECRET)).status).toBe(404);
+  });
+
+  test("without a configured secret the endpoint does not exist", async () => {
+    // `app` is built from an env with no JOB_SECRET.
+    const res = await app.request("/internal/jobs/agent/hourly", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${SECRET}` },
+    });
+    expect(res.status).toBe(404);
+  });
+});

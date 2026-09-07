@@ -151,7 +151,9 @@ personal-platform/
     ├── ui/                         @platform/ui       shared JSX primitives
     ├── charts/                     @platform/charts   server-rendered SVG
     ├── utility-kit/                @platform/utility-kit   the Utility contract
-    └── utility-weight/             @platform/utility-weight   🛑 placeholder only
+    ├── utility-weight/             @platform/utility-weight   daily weigh-ins
+    ├── agent-core/                 @platform/agent-core    stats, redaction, narration
+    └── utility-agent/              @platform/utility-agent hourly agent summaries
 ```
 
 ### `packages/db`
@@ -208,6 +210,7 @@ requestId → logger → secureHeaders → trimTrailingSlash → bodyLimit → c
   ├ static: public/                 zero DB
   ├ /auth/*      rateLimit          zero DB
   ├ /            session? directory : landing     zero DB either way
+  ├ /internal/jobs/{slug}/{job}      bearer token, zero DB unless it matches
   └ requireSession ─────────────────────────────  302 → / if absent
       └ /{slug}/*  for each utility in the registry
 ```
@@ -300,6 +303,97 @@ What *is* decided, because it's platform-level rather than product-level:
 
 The placeholder proves the whole contract end-to-end — registry, mounting, gate, directory
 listing — without committing to a single product decision.
+
+## Second utility: agent — what the sandbox has been up to
+
+An autonomous agent runs unattended on a server elsewhere. Its model traffic is
+broadcast to object storage and exposed as a partitioned BigQuery table; this
+utility reads that table, summarises a window at a time, and keeps the summaries.
+
+**Nothing in this repository names the project, dataset, bucket or table.** They
+arrive as `AGENT_LOGS_*` at runtime. The repository is public and permanent —
+that those logs exist is unremarkable, but publishing their address is an
+invitation to go and rattle the door. `.env.example` carries the shape and no
+values.
+
+### The arithmetic comes first, the prose second
+
+`@platform/agent-core` computes every number and every anomaly flag from the raw
+calls, deterministically, before a model is involved. Only then is the model
+shown the statistics, the flags, and a sample of prompts, and asked to explain
+them.
+
+That ordering is the whole design:
+
+- The same window always produces the same flags, so a stored summary is a
+  record rather than an impression.
+- Every figure can be recomputed from the source table and checked by hand.
+- A model asked to *explain* flagged behaviour is doing something it is reliable
+  at. A model asked to *notice* anomalies in a wall of JSON is not.
+
+The flags are cheap and boring on purpose: cost and volume against a trailing
+median, prompt sizes that only ever grow (a loop appending to its own context),
+identical consecutive prompts, error rate, replies cut off at the token limit, a
+model appearing for the first time — and silence, which is the one finding that
+cannot be reached by looking at the calls, because there are none. Medians
+rather than means throughout, so one runaway hour does not move the reference
+point that the next runaway hour is judged against.
+
+### Prompts are redacted before they leave the process
+
+Summarising an agent's traffic means reading its prompts, and its prompts
+contain whatever it was handling — including credentials it was given and
+credentials it found. Sending that to a third party is an exfiltration path
+created deliberately, so `redact.ts` narrows it: prefix-anchored patterns for
+key shapes that are only ever credentials. Deliberately not "any long base64
+run", which would catch more secrets and also destroy enough legitimate content
+that the summary would be written from redaction markers.
+
+### Windows tile the timeline
+
+The scheduled job resumes from the end of the last stored window rather than
+from the clock. A missed run — a deploy, an outage, a scheduler hiccup — is
+caught up on the next tick instead of leaving a hole, and because the windows
+are contiguous, *a gap in the sequence means something*. One window per
+invocation, so a long outage recovers over several ticks rather than in one
+enormous query. The on-demand button covers whatever the schedule has not
+reached, capped at a day so that a fortnight away is not one unbounded query.
+
+Both paths end in the same `summarizeWindow`, so they cannot drift into
+disagreeing about what a summary is.
+
+### Jobs, and the one hole in the perimeter
+
+A scheduler has no session, so scheduled work cannot live behind the gate. The
+`Utility` contract therefore grew an optional `jobs` map, and `mountJobs` exposes
+them at `POST /internal/jobs/{slug}/{job}` — above `requireSession`, on the
+public surface.
+
+It obeys the public surface's rule. The bearer token is compared in constant
+time before anything else runs, so an unauthenticated request does no work and
+issues no query; an absent `JOB_SECRET` disables the route entirely rather than
+leaving it open. The perimeter test covers all of it, including the token of the
+wrong length — `timingSafeEqual` throws rather than returning false on a length
+mismatch, which would otherwise turn a 401 into a 500.
+
+The test strips `AGENT_LOGS_*` from the environment before building its server.
+Bun loads `.env` automatically, so without that a developer with working
+credentials would have the "valid token" case issue a real BigQuery query from a
+unit test — slow, billable, and passing for the wrong reason.
+
+### Cost
+
+Money is stored as integer millionths of a dollar, for the same reason weights
+are stored as grams: a float cost is a rounding bug waiting to be argued about,
+and a `Decimal` drags in a runtime for numbers that are only ever summed and
+displayed.
+
+The dominant *external* cost is not this platform but the trace volume itself —
+the broadcast duplicates each prompt and completion between the trace and its
+observation, so roughly half of every stored object is redundant. It is not
+worth a compaction job at present volume, and compaction would in any case
+conflict with an immutable retention window on the bucket. Revisit if volume
+grows by an order of magnitude.
 
 ## Docker
 
