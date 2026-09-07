@@ -135,9 +135,20 @@ export async function chat(config: AgentConfig, options: ChatOptions): Promise<C
   let forceFinish = false;
   let finalAsked = false;
 
+  /**
+   * One retry for an empty reply, and only one.
+   *
+   * A run that cost the same as a successful one and stored "the model returned
+   * no narrative" was reaching here with `content` empty and no tool calls —
+   * the tokens were spent, the text was gone. Rather than silently keeping the
+   * blank, ask once more. If it comes back empty again, say so in words instead
+   * of storing a summary that looks like the model had nothing to report.
+   */
+  let emptyRetried = false;
+
   // Each round is at most one tool batch, so this only bites if the model
   // asks for a single tool at a time. It exists so the loop cannot spin.
-  const maxRounds = maxToolCalls + 2;
+  const maxRounds = maxToolCalls + 4;
 
   for (let round = 0; round < maxRounds; round++) {
     if (!forceFinish && deadline && Date.now() > deadline.getTime()) {
@@ -195,7 +206,14 @@ export async function chat(config: AgentConfig, options: ChatOptions): Promise<C
 
     costUsd += completion.usage?.cost ?? 0;
 
-    const choice = completion.choices?.[0];
+    // No choices at all is a provider failure, not a quiet model. Reported as an
+    // error so it degrades to "narrative unavailable" — which names a cause —
+    // rather than to "no narrative", which reads like a finding about the agent.
+    if (!completion.choices || completion.choices.length === 0) {
+      throw new OpenRouterError("the model returned no choices");
+    }
+
+    const choice = completion.choices[0] as Choice;
     if (choice?.message?.refusal) {
       return {
         text: "The model declined to summarise this window. The statistics above still stand.",
@@ -211,7 +229,26 @@ export async function chat(config: AgentConfig, options: ChatOptions): Promise<C
     // Either the model is done, or it asked for tools on the turn where they
     // were withheld — in which case what it wrote is all there is going to be.
     if (calls.length === 0 || forceFinish) {
-      return { text, toolCalls: performed, costUsd, stoppedEarly };
+      if (text === "" && !emptyRetried) {
+        emptyRetried = true;
+        messages.push({ role: "assistant", content: choice.message?.content ?? "" });
+        messages.push({
+          role: "user",
+          content:
+            "Your previous reply contained no text. Write the briefing now, as plain prose, in your reply itself rather than in any reasoning.",
+        });
+        continue;
+      }
+
+      return {
+        text,
+        toolCalls: performed,
+        costUsd,
+        stoppedEarly:
+          text === ""
+            ? `the model returned an empty reply (finish_reason: ${choice.finish_reason ?? "unknown"})`
+            : stoppedEarly,
+      };
     }
 
     // The assistant turn is replayed verbatim, tool calls included, or the tool
