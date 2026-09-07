@@ -127,6 +127,23 @@ const schema = z.object({
    * mint a token from. Produce one with the cloud CLI's print-access-token.
    */
   AGENT_LOGS_ACCESS_TOKEN: z.string().min(1).optional(),
+
+  /**
+   * Where the heavy on-demand work runs.
+   *
+   * A catch-up reads a day of traffic and reasons over it for minutes. That
+   * cannot happen inside a request: the server drops an idle connection long
+   * before the work is done, and the browser is shown a failure for a summary
+   * that is still being written and paid for. Named here, the button instead
+   * starts the same job the scheduler uses and returns immediately.
+   *
+   * All three are optional together. Absent, the button falls back to running
+   * the work inline — which is right on a laptop, where there is no job to
+   * start and no proxy to give up on the request.
+   */
+  AGENT_JOB_PROJECT: z.string().min(1).optional(),
+  AGENT_JOB_REGION: z.string().min(1).optional(),
+  AGENT_JOB_NAME: z.string().min(1).optional(),
 });
 
 export type AgentConfig = z.infer<typeof schema>;
@@ -191,3 +208,17 @@ export const selfKeyNames = (config: AgentConfig): string[] =>
     .split(",")
     .map((name) => name.trim())
     .filter(Boolean);
+
+/**
+ * Whether on-demand work can be handed to a job rather than run in the request.
+ *
+ * All three parts or none: a half-configured dispatch would fail at the moment
+ * someone pressed the button, which is the worst time to discover it.
+ */
+export const jobDispatchEnabled = (
+  config: AgentConfig,
+): config is AgentConfig & {
+  AGENT_JOB_PROJECT: string;
+  AGENT_JOB_REGION: string;
+  AGENT_JOB_NAME: string;
+} => Boolean(config.AGENT_JOB_PROJECT && config.AGENT_JOB_REGION && config.AGENT_JOB_NAME);

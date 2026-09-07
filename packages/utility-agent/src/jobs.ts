@@ -216,24 +216,35 @@ export async function catchUp(
  */
 const CATCH_UP_JOB_BUDGET_MS = 45 * 60_000;
 
+/** Ceiling on one on-demand window, however far back the caller asks to go. */
+const MAX_CATCH_UP_HOURS = 24;
+
 /**
- * A catch-up covering the last day, runnable without a browser.
+ * A catch-up, runnable without a browser. This is what the button starts.
  *
- * The button posts to a request, and a request has a timeout and whatever
- * memory the service was given. This path is the heaviest thing the utility
- * does — deep detail, a wide sample, and a tool loop that accumulates every
- * turn — so it also gets a home where neither of those is a constraint, and
- * where it can be exercised without a session.
+ * The heaviest thing the utility does — deep detail, a wide sample, and a tool
+ * loop that accumulates every turn — so it lives here, where nothing is
+ * waiting on it. The button used to run this work inside its own POST and was
+ * cut off by the connection idle timeout every time; now it dispatches this
+ * and returns, and the finished brief arrives as a push.
+ *
+ * `since` is an ISO instant, optional. Absent — a manual run, or a caller with
+ * nothing better to say — it means the last day. Present but unparseable is
+ * treated the same way rather than throwing: a malformed argument should not
+ * cost you the summary, and the window that was actually used is in the
+ * returned line either way.
  */
-export async function catchUpLastDay(): Promise<string> {
+export async function catchUpSince(since?: string): Promise<string> {
   if (!agentConfig()) return "not configured; nothing to do";
 
   const now = new Date();
-  const stored = await catchUp(
-    new Date(now.getTime() - 24 * 3_600_000),
-    now,
-    CATCH_UP_JOB_BUDGET_MS,
-  );
+  const floor = new Date(now.getTime() - MAX_CATCH_UP_HOURS * 3_600_000);
+
+  const asked = since ? new Date(since) : null;
+  const valid = asked && !Number.isNaN(asked.getTime()) ? asked : null;
+  const start = !valid || valid < floor ? floor : valid;
+
+  const stored = await catchUp(start, now, CATCH_UP_JOB_BUDGET_MS);
   const flags = stored.flags.map((f) => f.code).join(",") || "none";
 
   return `caught up ${stored.periodStart.toISOString()}..${stored.periodEnd.toISOString()}: ${stored.callCount} calls, flags=${flags}`;

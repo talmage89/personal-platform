@@ -1,4 +1,10 @@
-import { agentConfig, NotConfiguredError, notificationsEnabled } from "@platform/agent-core";
+import {
+  agentConfig,
+  dispatchJob,
+  jobDispatchEnabled,
+  NotConfiguredError,
+  notificationsEnabled,
+} from "@platform/agent-core";
 import type { AuthEnv } from "@platform/auth";
 import { Hono } from "hono";
 import { AgentPage, NotConfigured, Stat, SummaryCard, sessionOf } from "../components.tsx";
@@ -17,9 +23,14 @@ import {
  * close the gap between the last scheduled summary and now.
  *
  * No client JavaScript: the platform serves `script-src 'none'`, so catching up
- * is a native form POST followed by a redirect. That also makes the slow path
- * honest — the browser shows it is loading for as long as the work takes,
- * rather than a spinner that lies about what is happening.
+ * is a native form POST followed by a redirect.
+ *
+ * The redirect is immediate and the work is not done here. It was, once, and
+ * the button never worked: a catch-up runs for minutes, the connection is
+ * closed after ten idle seconds, and every press ended in a failure page while
+ * the summary went on being written and billed with nowhere to go. Handing the
+ * work to a job and telling you it started is both the honest answer and the
+ * only one that survives the wait.
  */
 
 /**
@@ -69,6 +80,7 @@ export function createOverviewRoutes() {
 
     const failed = c.req.query("failed");
     const caught = c.req.query("caught") !== undefined;
+    const started = c.req.query("started") !== undefined;
 
     return c.html(
       <AgentPage>
@@ -102,6 +114,11 @@ export function createOverviewRoutes() {
 
         {failed ? (
           <p class="mt-4 text-sm">Could not summarise: {failed}</p>
+        ) : started ? (
+          <p class="mt-4 text-muted text-sm">
+            catching up in the background — this takes a few minutes. It will appear below, and
+            arrive as a notification when it is done.
+          </p>
         ) : caught ? (
           <p class="mt-4 text-muted text-sm">caught up</p>
         ) : null}
@@ -138,6 +155,9 @@ export function createOverviewRoutes() {
   });
 
   routes.post("/catch-up", async (c) => {
+    const config = agentConfig();
+    if (!config) return c.redirect("/agent", 303);
+
     const session = sessionOf(c);
     const now = new Date();
 
@@ -160,6 +180,23 @@ export function createOverviewRoutes() {
     }
 
     try {
+      // Where a deployment has somewhere to put the work, put it there and
+      // return. A catch-up takes minutes; a connection that has sent nothing
+      // for ten seconds is closed under us, so waiting here does not fail
+      // gracefully — it fails at twelve seconds, every time, while the summary
+      // carries on being written and paid for with nowhere to be delivered.
+      //
+      // Marking the visit before dispatching is deliberate: the job is what
+      // reports on this window now, and a second press while the first is still
+      // running should not queue the same work twice.
+      if (jobDispatchEnabled(config)) {
+        await markViewed(session.sub, now);
+        await dispatchJob(config, ["dist/job.js", "agent", "catch-up", start.toISOString()]);
+        return c.redirect("/agent?started", 303);
+      }
+
+      // No job configured — a laptop, or a test. Run it here, where nothing is
+      // proxying the connection and the wait is honest.
       await catchUp(start, now);
       await markViewed(session.sub, now);
       return c.redirect("/agent?caught", 303);

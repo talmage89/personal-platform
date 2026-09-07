@@ -1,7 +1,7 @@
 import type { AuthEnv } from "@platform/auth";
 import { defineUtility } from "@platform/utility-kit";
 import { Hono } from "hono";
-import { catchUpLastDay, hourly, testChannel } from "./jobs.ts";
+import { catchUpSince, hourly, testChannel } from "./jobs.ts";
 import { createOverviewRoutes } from "./routes/overview.tsx";
 import { createPromptRoutes } from "./routes/prompts.tsx";
 import { createSummaryRoutes } from "./routes/summaries.tsx";
@@ -24,5 +24,5 @@ export default defineUtility({
   name: "agent",
   blurb: "what the sandbox has been up to",
   routes,
-  jobs: { hourly, "catch-up": catchUpLastDay, "test-channel": testChannel },
+  jobs: { hourly, "catch-up": catchUpSince, "test-channel": testChannel },
 });

@@ -36,7 +36,7 @@ let tokenCache: { token: string; expiresAt: number } | undefined;
  * anywhere on disk or in the environment. The env var is a local-development
  * escape hatch only — there is no metadata server on a laptop.
  */
-async function accessToken(config: AgentConfig): Promise<string> {
+export async function accessToken(config: AgentConfig): Promise<string> {
   if (config.AGENT_LOGS_ACCESS_TOKEN) return config.AGENT_LOGS_ACCESS_TOKEN;
 
   // A minute of headroom: a token that expires between this check and the

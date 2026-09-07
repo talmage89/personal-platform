@@ -23,7 +23,7 @@ export interface Utility {
    * session gate, and a scheduler has no session. `mountJobs` exposes them
    * separately, behind a shared secret. The returned string is logged.
    */
-  jobs?: Readonly<Record<string, () => Promise<string>>>;
+  jobs?: Readonly<Record<string, (...args: string[]) => Promise<string>>>;
 }
 
 export const defineUtility = (utility: Utility): Utility => utility;

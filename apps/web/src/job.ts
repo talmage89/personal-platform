@@ -10,7 +10,12 @@ import { utilities } from "~/utilities.ts";
  * there is no request behind it and no timeout to beat: the work is bounded by
  * its own deadline, in code, where the reason for the bound is visible.
  *
- * Usage: `bun dist/job.js <utility-slug> <job-name>`
+ * Usage: `bun dist/job.js <utility-slug> <job-name> [args...]`
+ *
+ * Trailing arguments are handed to the job untouched. They exist so that one
+ * job resource can serve both the schedule and an on-demand run that needs to
+ * say *which* window it wants, without a second deployment artifact to keep in
+ * step with this one.
  *
  * No explicit database disconnect on the way out, and no `@platform/db` import
  * to do it with. The Neon driver is HTTP and request-scoped, so there is no
@@ -24,7 +29,7 @@ import { utilities } from "~/utilities.ts";
 // is opened here — DB_URL is validated for shape only.
 env();
 
-const [slug, name] = process.argv.slice(2);
+const [slug, name, ...args] = process.argv.slice(2);
 
 if (!slug || !name) {
   console.error("usage: job <utility-slug> <job-name>");
@@ -44,7 +49,7 @@ if (!run) {
 const started = Date.now();
 
 try {
-  const result = await run();
+  const result = await run(...args);
   console.log(`${slug}/${name}: ${result} (${((Date.now() - started) / 1000).toFixed(1)}s)`);
   process.exit(0);
 } catch (error) {

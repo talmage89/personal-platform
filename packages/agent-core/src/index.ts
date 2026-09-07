@@ -1,4 +1,5 @@
 export {
+  accessToken,
   aggregateSpan,
   fetchCalls,
   fetchTrace,
@@ -15,9 +16,11 @@ export {
   DETAIL_LEVELS,
   type DetailBudget,
   type DetailLevel,
+  jobDispatchEnabled,
   resetAgentConfig,
   summaryBudget,
 } from "./config.ts";
+export { DispatchError, dispatchJob } from "./dispatch.ts";
 export {
   DEFAULT_HOURLY_INSTRUCTIONS,
   DEFAULT_SHARED_SYSTEM,
