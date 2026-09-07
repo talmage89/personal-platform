@@ -8,7 +8,11 @@ import type {
   Summary,
   ToolCallRecord,
 } from "@platform/agent-core";
-import { DEFAULT_RECAP_INSTRUCTIONS, DEFAULT_SYSTEM } from "@platform/agent-core";
+import {
+  DEFAULT_RECAP_INSTRUCTIONS,
+  DEFAULT_SYSTEM,
+  PROBE_MIN_MINUTES,
+} from "@platform/agent-core";
 import { type AgentSummary, type AgentSummaryKind, db, resolveUser } from "@platform/db";
 
 /**
