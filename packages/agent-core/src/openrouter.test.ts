@@ -196,7 +196,7 @@ describe("the tool loop", () => {
       const error = new Error("aborted");
       error.name = "AbortError";
       throw error;
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     let caught: unknown;
     try {

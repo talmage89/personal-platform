@@ -9,8 +9,9 @@ import type {
   ToolCallRecord,
 } from "@platform/agent-core";
 import {
+  DEFAULT_HOURLY_INSTRUCTIONS,
   DEFAULT_RECAP_INSTRUCTIONS,
-  DEFAULT_SYSTEM,
+  DEFAULT_SHARED_SYSTEM,
   PROBE_MIN_MINUTES,
 } from "@platform/agent-core";
 import { type AgentSummary, type AgentSummaryKind, db, resolveUser } from "@platform/db";
@@ -296,7 +297,7 @@ export async function recordSendFailure(message: string): Promise<void> {
   });
 }
 
-export type PromptKind = "hourly" | "recap";
+export type PromptKind = "system" | "hourly" | "recap";
 
 export interface EditablePrompt {
   kind: PromptKind;
@@ -310,7 +311,8 @@ export interface EditablePrompt {
 export const MAX_PROMPT_CHARS = 20_000;
 
 const DEFAULTS: Record<PromptKind, string> = {
-  hourly: DEFAULT_SYSTEM,
+  system: DEFAULT_SHARED_SYSTEM,
+  hourly: DEFAULT_HOURLY_INSTRUCTIONS,
   recap: DEFAULT_RECAP_INSTRUCTIONS,
 };
 
@@ -325,7 +327,7 @@ export async function editablePrompts(): Promise<EditablePrompt[]> {
   const rows = await db().agentPrompt.findMany();
   const byKind = new Map(rows.map((row) => [row.kind, row]));
 
-  return (["hourly", "recap"] as const).map((kind) => {
+  return (["system", "hourly", "recap"] as const).map((kind) => {
     const row = byKind.get(kind);
     return {
       kind,

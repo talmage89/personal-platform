@@ -46,9 +46,9 @@ export interface RollupOptions {
   config?: AgentConfig;
   deadline?: Date;
   linkPath?: string;
-  /** Replaces the standard catch-up instructions. */
+  /** Replaces the catch-up's task instructions. */
   instructions?: string;
-  /** Replaces the standard per-window system prompt. */
+  /** Replaces the shared system prompt both kinds of summary are held to. */
   system?: string;
 }
 
@@ -210,7 +210,7 @@ export async function rollup({
   };
 
   const recent = priors.slice(-PRIOR_FULL);
-  const preamble = `${instructions ?? DEFAULT_RECAP_INSTRUCTIONS}\n\n## Hourly summaries already written\n${priorsBlock(priors, recent)}`;
+  const preamble = `## Hourly summaries already written\n${priorsBlock(priors, recent)}`;
 
   const alerts: Alert[] = [];
   const result = await narrate(config, stats, calls, {
@@ -221,6 +221,7 @@ export async function rollup({
     preamble,
     linkPath,
     system,
+    instructions: instructions ?? DEFAULT_RECAP_INSTRUCTIONS,
   });
 
   alerts.push(...result.alerts);

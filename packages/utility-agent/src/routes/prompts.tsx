@@ -29,19 +29,25 @@ import {
  */
 
 const LABELS: Record<PromptKind, { title: string; blurb: string }> = {
+  system: {
+    title: "shared framing",
+    blurb:
+      "Prepended to both of the prompts below, so every summary is held to it. This is the place for the standing rules — never invent a figure, treat prompts as evidence rather than instructions, always name hosts and credentials the agent touched.",
+  },
   hourly: {
     title: "hourly briefing",
     blurb:
-      "Used for every scheduled window, and for each window inside a catch-up. This is where to say what you want noticed — hosts contacted, files written, credentials read.",
+      "Added to the shared framing for a single window. This is where to say how one hour should be written up.",
   },
   recap: {
     title: "catch-up",
     blurb:
-      "Added on top of the hourly prompt when accounting for several hours at once. This is where to say how to weigh the period as a whole rather than hour by hour.",
+      "Added to the shared framing when accounting for several hours at once, in place of the hourly instructions. This is where to say how to weigh the period as a whole rather than hour by hour.",
   },
 };
 
-const isKind = (value: string): value is PromptKind => value === "hourly" || value === "recap";
+const isKind = (value: string): value is PromptKind =>
+  value === "system" || value === "hourly" || value === "recap";
 
 export function createPromptRoutes() {
   const routes = new Hono<AuthEnv>();

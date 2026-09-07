@@ -19,7 +19,8 @@ export {
   summaryBudget,
 } from "./config.ts";
 export {
-  DEFAULT_SYSTEM,
+  DEFAULT_HOURLY_INSTRUCTIONS,
+  DEFAULT_SHARED_SYSTEM,
   type NarrateOptions,
   type NarrationResult,
   narrate,

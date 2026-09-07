@@ -102,8 +102,10 @@ model AgentChannel {
   updatedAt DateTime @updatedAt
 }
 
-/// Which prompt. `hourly` writes up one window; `recap` accounts for many.
+/// Which prompt. `system` is the shared framing both of the others are held to;
+/// `hourly` writes up one window; `recap` accounts for many.
 enum AgentPromptKind {
+  system
   hourly
   recap
 }

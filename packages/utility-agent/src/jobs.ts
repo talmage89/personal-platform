@@ -143,9 +143,10 @@ export async function hourly(): Promise<string> {
 
   if (!window) return ["already up to date", probe].filter(Boolean).join(" · ");
 
-  const [history, models, system] = await Promise.all([
+  const [history, models, system, instructions] = await Promise.all([
     baselineHistory(),
     knownModels(),
+    promptOverride("system"),
     promptOverride("hourly"),
   ]);
 
@@ -157,6 +158,7 @@ export async function hourly(): Promise<string> {
       deadline: deadlineIn(HOURLY_BUDGET_MS),
       linkPath: "/agent",
       ...(system ? { system } : {}),
+      ...(instructions ? { instructions } : {}),
     },
   });
 
@@ -190,7 +192,7 @@ export async function catchUp(
   const [priors, instructions, system] = await Promise.all([
     priorsBetween(start, end),
     promptOverride("recap"),
-    promptOverride("hourly"),
+    promptOverride("system"),
   ]);
 
   const summary = await rollup({
