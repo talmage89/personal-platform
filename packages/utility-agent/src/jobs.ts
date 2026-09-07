@@ -1,6 +1,7 @@
 import {
   advanceInterval,
   agentConfig,
+  completionMessage,
   nextWindow,
   notificationsEnabled,
   probeDue,
@@ -55,6 +56,43 @@ const deadlineIn = (ms: number): Date => new Date(Date.now() + ms);
 async function noteAlerts(summary: Summary): Promise<void> {
   const last = summary.alerts.at(-1);
   if (last) await recordSend(new Date(last.sentAt));
+}
+
+/**
+ * Tells you the catch-up has landed.
+ *
+ * Only the catch-up does this. The hourly run stays silent unless it found
+ * something urgent, because a push every hour is one that stops being read —
+ * and the value of this channel is entirely in what its arrival means. A
+ * catch-up earns one: you asked for it, it can take minutes, and by the time it
+ * finishes the tab is usually closed.
+ *
+ * A failure here is recorded, never thrown. The brief is already written and
+ * stored; losing it because a notification did not send would be the worse
+ * outcome, and the failure is surfaced on the page anyway.
+ */
+async function announce(stored: StoredSummary): Promise<void> {
+  const config = agentConfig();
+  if (!config || !notificationsEnabled(config)) return;
+
+  try {
+    await sendPush(
+      config,
+      completionMessage(config, {
+        start: stored.periodStart,
+        end: stored.periodEnd,
+        callCount: stored.callCount,
+        costUsd: stored.costUsd,
+        flags: stored.flags,
+        narrative: stored.narrative,
+        path: `/agent/summaries/${stored.id}`,
+        alertsSent: stored.alerts.length,
+      }),
+    );
+    await recordSend(new Date());
+  } catch (error) {
+    await recordSendFailure(error instanceof Error ? error.message : String(error));
+  }
 }
 
 /**
@@ -162,6 +200,7 @@ export async function catchUp(start: Date, end: Date): Promise<StoredSummary> {
 
   const stored = await saveSummary(summary, "manual");
   await noteAlerts(summary);
+  await announce(stored);
   return stored;
 }
 

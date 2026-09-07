@@ -28,6 +28,8 @@ export {
   type Alert,
   type AlertSeverity,
   advanceInterval,
+  type CompletionDigest,
+  completionMessage,
   notificationsEnabled,
   PROBE_MAX_MINUTES,
   PROBE_MIN_MINUTES,

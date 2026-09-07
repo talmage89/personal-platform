@@ -117,6 +117,79 @@ export function alertTool(config: AgentConfig, sent: Alert[], path = "/agent"): 
 }
 
 /**
+ * "Your catch-up is ready."
+ *
+ * Only the on-demand brief announces itself. The hourly run stays silent unless
+ * it has something urgent to say — a notification every hour is one nobody
+ * reads, and the whole point of the channel is that its arrival means
+ * something. A catch-up is different: a person asked for it, it can take
+ * minutes, and by the time it lands they have usually closed the tab.
+ */
+export interface CompletionDigest {
+  start: Date;
+  end: Date;
+  callCount: number;
+  costUsd: number;
+  flags: { severity: string; detail: string }[];
+  narrative: string;
+  /** Where the full brief lives, e.g. `/agent/summaries/<id>`. */
+  path: string;
+  /** Alerts already pushed while writing it, so the message can say so. */
+  alertsSent: number;
+}
+
+/** How much narrative rides along. The rest is one tap away. */
+const DIGEST_CHARS = 700;
+
+const stamp = (d: Date): string => d.toISOString().slice(0, 16).replace("T", " ");
+
+/** Costs here are often fractions of a cent; two decimals would show "$0.00". */
+const money = (usd: number): string =>
+  usd === 0 ? "$0" : usd < 0.01 ? `$${usd.toFixed(4)}` : `$${usd.toFixed(2)}`;
+
+function excerpt(narrative: string): string {
+  const flat = narrative.trim();
+  if (flat.length <= DIGEST_CHARS) return flat;
+
+  // Cut at a paragraph if one falls in range, otherwise at a word — a push that
+  // ends mid-word reads as a truncation bug rather than a summary.
+  const cut = flat.slice(0, DIGEST_CHARS);
+  const para = cut.lastIndexOf("\n\n");
+  const body = para > DIGEST_CHARS * 0.5 ? cut.slice(0, para) : cut.replace(/\s\S*$/, "");
+  return `${body}…`;
+}
+
+export function completionMessage(config: AgentConfig, digest: CompletionDigest): string {
+  const concerns = digest.flags.filter((f) => f.severity === "concern").length;
+  const notices = digest.flags.length - concerns;
+
+  const counts = [
+    `${digest.callCount.toLocaleString("en-US")} calls`,
+    money(digest.costUsd),
+    concerns > 0 ? `${concerns} concern${concerns === 1 ? "" : "s"}` : null,
+    notices > 0 ? `${notices} notice${notices === 1 ? "" : "s"}` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  return [
+    concerns > 0 ? "! catch-up ready" : "catch-up ready",
+    "",
+    `${stamp(digest.start)} – ${stamp(digest.end)} UTC`,
+    counts,
+    // Said out loud so two pushes in a row do not read as a duplicate.
+    digest.alertsSent > 0
+      ? `\n(${digest.alertsSent} alert${digest.alertsSent === 1 ? "" : "s"} already sent separately)`
+      : "",
+    "",
+    excerpt(digest.narrative),
+  ]
+    .filter((line) => line !== "")
+    .join("\n")
+    .concat(linkTo(config, digest.path));
+}
+
+/**
  * How often to prove the channel still works.
  *
  * A notification channel nobody has exercised is a channel nobody knows is

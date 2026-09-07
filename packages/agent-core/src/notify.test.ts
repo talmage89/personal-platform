@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import type { AgentConfig } from "./config.ts";
 import {
   advanceInterval,
+  completionMessage,
   PROBE_MAX_MINUTES,
   PROBE_MIN_MINUTES,
   type ProbeState,
@@ -44,5 +46,74 @@ describe("channel probes", () => {
 
   test("a week stays a week", () => {
     expect(advanceInterval(PROBE_MAX_MINUTES)).toBe(PROBE_MAX_MINUTES);
+  });
+});
+
+describe("the catch-up completion push", () => {
+  const config = {
+    TELEGRAM_BOT_TOKEN: "t",
+    TELEGRAM_CHAT_ID: "c",
+    AGENT_LINK_BASE: "https://example.test",
+  } as AgentConfig;
+
+  const digest = {
+    start: at("2026-01-01T00:00:00Z"),
+    end: at("2026-01-01T12:00:00Z"),
+    callCount: 1_234,
+    costUsd: 2.5,
+    flags: [] as { severity: string; detail: string }[],
+    narrative: "It refactored the parser and then went quiet.",
+    path: "/agent/summaries/abc",
+    alertsSent: 0,
+  };
+
+  test("carries the period, the counts and a link to the full brief", () => {
+    const message = completionMessage(config, digest);
+    expect(message).toContain("catch-up ready");
+    expect(message).toContain("2026-01-01 00:00 – 2026-01-01 12:00 UTC");
+    expect(message).toContain("1,234 calls");
+    expect(message).toContain("$2.50");
+    expect(message).toContain("It refactored the parser");
+    expect(message).toContain("https://example.test/agent/summaries/abc");
+  });
+
+  test("a concern is marked in the first line, where a notification is read", () => {
+    const message = completionMessage(config, {
+      ...digest,
+      flags: [{ severity: "concern", detail: "spend tripled" }],
+    });
+    expect(message.split("\n")[0]).toBe("! catch-up ready");
+    expect(message).toContain("1 concern");
+  });
+
+  test("says when alerts already went out, so two pushes do not read as one repeated", () => {
+    const message = completionMessage(config, { ...digest, alertsSent: 2 });
+    expect(message).toContain("2 alerts already sent separately");
+  });
+
+  test("a long narrative is cut at a boundary, never mid-word", () => {
+    const message = completionMessage(config, {
+      ...digest,
+      narrative: `${"word ".repeat(400)}end`,
+    });
+    expect(message).toContain("…");
+    // The character before the ellipsis must not be a partial token.
+    const body = message.slice(0, message.indexOf("…"));
+    expect(body.endsWith("word") || body.endsWith("word ")).toBe(true);
+  });
+
+  test("fractions of a cent still render as a number", () => {
+    const message = completionMessage(config, { ...digest, costUsd: 0.0004 });
+    expect(message).toContain("$0.0004");
+    expect(message).not.toContain("$0.00 ");
+  });
+
+  test("no link base means no link, not a broken one", () => {
+    const message = completionMessage(
+      { ...config, AGENT_LINK_BASE: undefined } as AgentConfig,
+      digest,
+    );
+    expect(message).not.toContain("http");
+    expect(message).toContain("catch-up ready");
   });
 });
