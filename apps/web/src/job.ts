@@ -1,5 +1,4 @@
 import { env } from "@platform/core";
-import { disconnect } from "@platform/db";
 import { utilities } from "~/utilities.ts";
 
 /**
@@ -12,6 +11,13 @@ import { utilities } from "~/utilities.ts";
  * its own deadline, in code, where the reason for the bound is visible.
  *
  * Usage: `bun dist/job.js <utility-slug> <job-name>`
+ *
+ * No explicit database disconnect on the way out, and no `@platform/db` import
+ * to do it with. The Neon driver is HTTP and request-scoped, so there is no
+ * pool socket to close, and `process.exit` ends anything a local Postgres
+ * adapter might be holding. Importing the client here purely to shut it down
+ * would give the web app a direct database dependency it does not otherwise
+ * have — see the perimeter.
  */
 
 // Fails fast on a misconfigured deploy, exactly as the server does. No socket
@@ -40,11 +46,9 @@ const started = Date.now();
 try {
   const result = await run();
   console.log(`${slug}/${name}: ${result} (${((Date.now() - started) / 1000).toFixed(1)}s)`);
-  await disconnect();
   process.exit(0);
 } catch (error) {
   console.error(`${slug}/${name} failed after ${((Date.now() - started) / 1000).toFixed(1)}s`);
   console.error(error);
-  await disconnect();
   process.exit(1);
 }
