@@ -171,45 +171,79 @@ async function runQuery(
  */
 const EXCLUDE_SELF = "AND NOT CONTAINS_SUBSTR(TO_JSON_STRING(trace), @selfMarker)";
 
+/**
+ * The table stores `trace` as a single JSON column, so every field is read
+ * through a JSON accessor rather than dotted access.
+ *
+ * This is not a stylistic choice. The table was originally created with an
+ * auto-detected schema, which inferred `input.messages[].content` as STRING
+ * from early text-only traces. The moment the agent used tool calls, `content`
+ * became an array of content parts — and a type conflict in one file fails
+ * *every* query touching that partition, not just that row.
+ * `ignore_unknown_values` does not help: it forgives unknown fields, not fields
+ * whose type disagrees with the schema.
+ *
+ * Typing the whole record as JSON removes the entire class of failure. The
+ * broker can add fields, change a scalar to an object, or return null where a
+ * string used to be, and the reader keeps working. Everything below uses SAFE
+ * variants for the same reason: one malformed value yields NULL for that row
+ * instead of failing the query that was supposed to notice it.
+ */
+// `at` is a reserved word in GoogleSQL, so the alias is backticked everywhere
+// it appears. Without that the query fails to parse — and it fails at run time,
+// not at build time, which is why it survived a typecheck and a test suite.
+const AT = "SAFE.TIMESTAMP(JSON_VALUE(trace, '$.timestamp'))";
+const int64 = (path: string) => `IFNULL(SAFE_CAST(JSON_VALUE(o, '$.${path}') AS INT64), 0)`;
+const COST = "IFNULL(SAFE_CAST(JSON_VALUE(o, '$.totalCost') AS FLOAT64), 0.0)";
+
 const SQL = (table: string) => `
 SELECT
-  trace.id                                        AS traceId,
-  trace.timestamp                                 AS at,
-  IFNULL(o.model, '(unknown)')                    AS model,
-  IFNULL(o.providerSlug, '(unknown)')             AS provider,
-  IFNULL(o.promptTokens, 0)                       AS promptTokens,
-  IFNULL(o.completionTokens, 0)                   AS completionTokens,
-  IFNULL(o.totalTokens, 0)                        AS totalTokens,
-  IFNULL(o.totalCost, 0.0)                        AS costUsd,
-  IFNULL(o.level, 'DEFAULT')                      AS level,
-  o.statusCode                                    AS statusCode,
-  IFNULL(o.normalizedFinishReason, o.finishReason) AS finishReason,
-  SUBSTR(TO_JSON_STRING(trace.input), 1, @excerpt) AS inputExcerpt
-FROM ${table}, UNNEST(trace.observations) AS o
+  JSON_VALUE(trace, '$.id')                            AS traceId,
+  ${AT}                                                AS `at`,
+  IFNULL(JSON_VALUE(o, '$.model'), '(unknown)')        AS model,
+  IFNULL(JSON_VALUE(o, '$.providerSlug'), '(unknown)') AS provider,
+  ${int64("promptTokens")}                             AS promptTokens,
+  ${int64("completionTokens")}                         AS completionTokens,
+  ${int64("totalTokens")}                              AS totalTokens,
+  ${COST}                                              AS costUsd,
+  IFNULL(JSON_VALUE(o, '$.level'), 'DEFAULT')          AS level,
+  JSON_VALUE(o, '$.statusCode')                        AS statusCode,
+  IFNULL(JSON_VALUE(o, '$.normalizedFinishReason'), JSON_VALUE(o, '$.finishReason')) AS finishReason,
+  SUBSTR(TO_JSON_STRING(JSON_QUERY(trace, '$.input')), 1, @excerpt) AS inputExcerpt
+FROM ${table}, UNNEST(JSON_QUERY_ARRAY(trace, '$.observations')) AS o
 WHERE dt BETWEEN @dtStart AND @dtEnd
-  AND trace.timestamp >= @start
-  AND trace.timestamp <  @end
+  AND ${AT} >= @start
+  AND ${AT} <  @end
   ${EXCLUDE_SELF}
-ORDER BY trace.timestamp
+ORDER BY `at`
 LIMIT @rowLimit
 `;
 
 /** Matching calls, with a longer excerpt than the window read carries. */
 const SEARCH_SQL = (table: string) => `
 SELECT
-  trace.id                                        AS traceId,
-  trace.timestamp                                 AS at,
-  IFNULL(o.model, '(unknown)')                    AS model,
-  IFNULL(o.promptTokens, 0)                       AS promptTokens,
-  SUBSTR(TO_JSON_STRING(trace.input), 1, @excerpt) AS inputExcerpt
-FROM ${table}, UNNEST(trace.observations) AS o
+  JSON_VALUE(trace, '$.id')                     AS traceId,
+  ${AT}                                         AS `at`,
+  IFNULL(JSON_VALUE(o, '$.model'), '(unknown)') AS model,
+  ${int64("promptTokens")}                      AS promptTokens,
+  SUBSTR(TO_JSON_STRING(JSON_QUERY(trace, '$.input')), 1, @excerpt) AS inputExcerpt
+FROM ${table}, UNNEST(JSON_QUERY_ARRAY(trace, '$.observations')) AS o
 WHERE dt BETWEEN @dtStart AND @dtEnd
-  AND trace.timestamp >= @start
-  AND trace.timestamp <  @end
-  AND CONTAINS_SUBSTR(TO_JSON_STRING(trace.input), @needle)
+  AND ${AT} >= @start
+  AND ${AT} <  @end
+  AND CONTAINS_SUBSTR(TO_JSON_STRING(JSON_QUERY(trace, '$.input')), @needle)
   ${EXCLUDE_SELF}
-ORDER BY trace.timestamp
+ORDER BY `at`
 LIMIT @rowLimit
+`;
+
+/** One trace in full, for when an excerpt was not enough. */
+const TRACE_SQL = (table: string) => `
+SELECT SUBSTR(TO_JSON_STRING(trace), 1, @excerpt) AS body
+FROM ${table}
+WHERE dt BETWEEN @dtStart AND @dtEnd
+  AND JSON_VALUE(trace, '$.id') = @traceId
+LIMIT 1
 `;
 
 /**
@@ -226,31 +260,22 @@ LIMIT @rowLimit
  */
 const AGGREGATE_SQL = (table: string) => `
 SELECT
-  IFNULL(o.model, '(unknown)')                                   AS model,
-  COUNT(*)                                                       AS calls,
-  SUM(IFNULL(o.totalTokens, 0))                                  AS totalTokens,
-  SUM(IFNULL(o.totalCost, 0.0))                                  AS costUsd,
-  COUNTIF(o.statusCode IS NOT NULL OR IFNULL(o.level, 'DEFAULT') != 'DEFAULT') AS errorCount,
-  APPROX_QUANTILES(IFNULL(o.promptTokens, 0), 2)[OFFSET(1)]      AS medianPromptTokens
-FROM ${table}, UNNEST(trace.observations) AS o
+  IFNULL(JSON_VALUE(o, '$.model'), '(unknown)') AS model,
+  COUNT(*)                                      AS calls,
+  SUM(${int64("totalTokens")})                  AS totalTokens,
+  SUM(${COST})                                  AS costUsd,
+  COUNTIF(
+    JSON_VALUE(o, '$.statusCode') IS NOT NULL
+    OR IFNULL(JSON_VALUE(o, '$.level'), 'DEFAULT') != 'DEFAULT'
+  )                                             AS errorCount,
+  APPROX_QUANTILES(${int64("promptTokens")}, 2)[OFFSET(1)] AS medianPromptTokens
+FROM ${table}, UNNEST(JSON_QUERY_ARRAY(trace, '$.observations')) AS o
 WHERE dt BETWEEN @dtStart AND @dtEnd
-  AND trace.timestamp >= @start
-  AND trace.timestamp <  @end
+  AND ${AT} >= @start
+  AND ${AT} <  @end
   ${EXCLUDE_SELF}
 GROUP BY model
 ORDER BY calls DESC
-`;
-
-/** One trace in full, for when an excerpt was not enough. */
-const TRACE_SQL = (table: string) => `
-SELECT
-  trace.id                                   AS traceId,
-  trace.timestamp                            AS at,
-  SUBSTR(TO_JSON_STRING(trace), 1, @excerpt) AS body
-FROM ${table}
-WHERE dt BETWEEN @dtStart AND @dtEnd
-  AND trace.id = @traceId
-LIMIT 1
 `;
 
 const day = (d: Date): string => d.toISOString().slice(0, 10);
