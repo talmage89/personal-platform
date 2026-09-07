@@ -186,12 +186,14 @@ export function createOverviewRoutes() {
       // gracefully — it fails at twelve seconds, every time, while the summary
       // carries on being written and paid for with nowhere to be delivered.
       //
-      // Marking the visit before dispatching is deliberate: the job is what
-      // reports on this window now, and a second press while the first is still
-      // running should not queue the same work twice.
+      // Dispatch first, mark second. The mark is what "since last time" is
+      // measured from, so advancing it for a job that never started would
+      // quietly discard the very window you asked about — and you would not
+      // find out until the next catch-up came back describing less than it
+      // should. Marking twice costs nothing; marking too early costs a window.
       if (jobDispatchEnabled(config)) {
-        await markViewed(session.sub, now);
         await dispatchJob(config, ["dist/job.js", "agent", "catch-up", start.toISOString()]);
+        await markViewed(session.sub, now);
         return c.redirect("/agent?started", 303);
       }
 
