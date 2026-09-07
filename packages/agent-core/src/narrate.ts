@@ -1,4 +1,4 @@
-import { type AgentConfig, type DetailBudget, summaryBudget } from "./config.ts";
+import { type DetailBudget, type NarrationConfig, summaryBudget } from "./config.ts";
 import { type Alert, alertTool, notificationsEnabled } from "./notify.ts";
 import { chat, OpenRouterError, type ToolSpec } from "./openrouter.ts";
 import { redactAll } from "./redact.ts";
@@ -136,7 +136,7 @@ function statsBlock(stats: WindowStats): string {
 }
 
 export async function narrate(
-  config: AgentConfig,
+  config: NarrationConfig,
   stats: WindowStats,
   calls: Call[],
   options: NarrateOptions = {},

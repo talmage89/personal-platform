@@ -48,6 +48,15 @@ const MAX_CATCH_UP_HOURS = 24;
  */
 const RECENT_ON_OVERVIEW = 8;
 
+/**
+ * How long a dispatched catch-up is still worth describing as "in progress".
+ *
+ * Matches the job's own budget. Past it the job has either finished or died,
+ * and continuing to claim it is running would be the page inventing a state it
+ * has no evidence for — the failure this notice was added to avoid.
+ */
+const CATCH_UP_PATIENCE_MS = 45 * 60_000;
+
 export function createOverviewRoutes() {
   const routes = new Hono<AuthEnv>();
 
@@ -80,7 +89,16 @@ export function createOverviewRoutes() {
 
     const failed = c.req.query("failed");
     const caught = c.req.query("caught") !== undefined;
-    const started = c.req.query("started") !== undefined;
+
+    // When the catch-up was dispatched, not merely that it was. The parameter
+    // alone is a claim that never expires: it survives every reload, so the
+    // page went on saying "catching up" long after the summary had landed and
+    // was sitting directly below the notice. Carrying the instant lets the
+    // page check whether anything has been stored since, and say so.
+    const startedAt = Number(c.req.query("started"));
+    const started = Number.isFinite(startedAt) && startedAt > 0 ? startedAt : null;
+    const landed = started !== null && summaries.some((s) => s.createdAt.getTime() > started);
+    const givenUp = started !== null && now.getTime() - started > CATCH_UP_PATIENCE_MS;
 
     return c.html(
       <AgentPage>
@@ -114,13 +132,18 @@ export function createOverviewRoutes() {
 
         {failed ? (
           <p class="mt-4 text-sm">Could not summarise: {failed}</p>
-        ) : started ? (
-          <p class="mt-4 text-muted text-sm">
-            catching up in the background — this takes a few minutes. It will appear below, and
-            arrive as a notification when it is done.
-          </p>
-        ) : caught ? (
+        ) : landed || caught ? (
           <p class="mt-4 text-muted text-sm">caught up</p>
+        ) : started !== null && givenUp ? (
+          <p class="mt-4 text-sm">
+            ! that catch-up never stored a summary. It has had longer than the job is allowed to
+            run, so it failed rather than is running.
+          </p>
+        ) : started !== null ? (
+          <p class="mt-4 text-muted text-sm">
+            catching up in the background — this takes a few minutes. Reload to see it, or wait for
+            the notification.
+          </p>
         ) : null}
 
         {channel.lastError ? (
@@ -194,7 +217,7 @@ export function createOverviewRoutes() {
       if (jobDispatchEnabled(config)) {
         await dispatchJob(config, ["dist/job.js", "agent", "catch-up", start.toISOString()]);
         await markViewed(session.sub, now);
-        return c.redirect("/agent?started", 303);
+        return c.redirect(`/agent?started=${now.getTime()}`, 303);
       }
 
       // No job configured — a laptop, or a test. Run it here, where nothing is

@@ -69,7 +69,7 @@ export const BUDGETS: Record<DetailLevel, DetailBudget> = {
   },
 };
 
-const schema = z.object({
+const baseSchema = z.object({
   /** Cloud project billed for the queries. Also the project the dataset is in. */
   AGENT_LOGS_PROJECT: z.string().min(1),
   /** Dataset holding the traces table. */
@@ -78,19 +78,6 @@ const schema = z.object({
   AGENT_LOGS_TABLE: z.string().min(1),
   /** Processing location. Must match where the dataset actually lives. */
   AGENT_LOGS_LOCATION: z.string().min(1),
-
-  /** Summaries are written through OpenRouter — the same broker the agent uses. */
-  OPENROUTER_API_KEY: z.string().min(1),
-
-  /**
-   * No default. Model slugs move faster than this file does, and a stale
-   * default fails as a confusing 400 from the broker halfway through a
-   * scheduled run. Absent, the deployment reports itself unconfigured, which
-   * is the honest answer and visible on the page.
-   */
-  AGENT_SUMMARY_MODEL: z.string().min(1),
-  /** Falls back to the hourly model. Catch-up reasons over more material. */
-  AGENT_CATCHUP_MODEL: z.string().min(1).optional(),
 
   AGENT_SUMMARY_DETAIL: z.enum(DETAIL_LEVELS).default("standard"),
   AGENT_CATCHUP_DETAIL: z.enum(DETAIL_LEVELS).default("deep"),
@@ -146,9 +133,42 @@ const schema = z.object({
   AGENT_JOB_NAME: z.string().min(1).optional(),
 });
 
-export type AgentConfig = z.infer<typeof schema>;
+/**
+ * What it costs money to do, kept separate from what it costs nothing to read.
+ *
+ * Everything above is enough to render the site: the pages read stored
+ * summaries out of Postgres and never call a model. Only the narrating paths —
+ * the hourly job and the catch-up it dispatches — need a way to spend, and
+ * those run as a job, unreachable from the internet.
+ *
+ * Splitting them means the public web service can be deployed without a broker
+ * key at all. That is worth some ceremony: a credential that can spend belongs
+ * on as few surfaces as possible, and the read-only half of this utility had
+ * been carrying one for no reason other than that the schema demanded it.
+ */
+const narrationSchema = baseSchema.extend({
+  /** Summaries are written through OpenRouter — the same broker the agent uses. */
+  OPENROUTER_API_KEY: z.string().min(1),
+
+  /**
+   * No default. Model slugs move faster than this file does, and a stale
+   * default fails as a confusing 400 from the broker halfway through a
+   * scheduled run. Absent, the job reports itself unconfigured, which is the
+   * honest answer and visible in its log.
+   */
+  AGENT_SUMMARY_MODEL: z.string().min(1),
+  /** Falls back to the hourly model. Catch-up reasons over more material. */
+  AGENT_CATCHUP_MODEL: z.string().min(1).optional(),
+});
+
+/** Enough to read and render. Holds no credential that can spend. */
+export type AgentConfig = z.infer<typeof baseSchema>;
+
+/** Everything above, plus the means to call a model. Jobs only. */
+export type NarrationConfig = z.infer<typeof narrationSchema>;
 
 let cached: AgentConfig | null | undefined;
+let cachedNarration: NarrationConfig | null | undefined;
 
 /**
  * The configuration, or `null` if this deployment has not been given one.
@@ -159,22 +179,39 @@ let cached: AgentConfig | null | undefined;
  */
 export function agentConfig(): AgentConfig | null {
   if (cached === undefined) {
-    const result = schema.safeParse(process.env);
+    const result = baseSchema.safeParse(process.env);
     cached = result.success ? result.data : null;
   }
   return cached;
 }
 
+/**
+ * The configuration for work that calls a model, or `null` without one.
+ *
+ * A deployment can legitimately have this and not that: the web service is
+ * deliberately given no broker key, so `agentConfig()` succeeds there while
+ * this returns `null`. That is not a misconfiguration, and nothing that only
+ * reads should be asking for it.
+ */
+export function narrationConfig(): NarrationConfig | null {
+  if (cachedNarration === undefined) {
+    const result = narrationSchema.safeParse(process.env);
+    cachedNarration = result.success ? result.data : null;
+  }
+  return cachedNarration;
+}
+
 /** Why the configuration did not parse. For a startup log, not for a page. */
 export function agentConfigProblems(): string[] {
-  const result = schema.safeParse(process.env);
+  const result = narrationSchema.safeParse(process.env);
   if (result.success) return [];
   return result.error.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`);
 }
 
-/** Clears the memo. Tests only. */
+/** Clears the memos. Tests only. */
 export function resetAgentConfig(): void {
   cached = undefined;
+  cachedNarration = undefined;
 }
 
 /** Fully-qualified table reference, backticked for interpolation into SQL. */
@@ -188,7 +225,7 @@ export const summaryBudget = (config: AgentConfig): DetailBudget =>
 export const catchupBudget = (config: AgentConfig): DetailBudget =>
   BUDGETS[config.AGENT_CATCHUP_DETAIL];
 
-export const catchupModel = (config: AgentConfig): string =>
+export const catchupModel = (config: NarrationConfig): string =>
   config.AGENT_CATCHUP_MODEL ?? config.AGENT_SUMMARY_MODEL;
 
 /**

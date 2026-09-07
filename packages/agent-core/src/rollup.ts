@@ -1,5 +1,5 @@
 import { aggregateSpan, fetchCalls } from "./bigquery.ts";
-import { type AgentConfig, agentConfig, catchupBudget, catchupModel } from "./config.ts";
+import { catchupBudget, catchupModel, type NarrationConfig, narrationConfig } from "./config.ts";
 import { narrate } from "./narrate.ts";
 import type { Alert } from "./notify.ts";
 import type { ToolSpec } from "./openrouter.ts";
@@ -43,7 +43,7 @@ export interface RollupOptions {
   window: Window;
   /** Hourly summaries whose windows fall inside the span, oldest first. */
   priors: PriorSummary[];
-  config?: AgentConfig;
+  config?: NarrationConfig;
   deadline?: Date;
   linkPath?: string;
   /** Replaces the catch-up's task instructions. */
@@ -170,7 +170,7 @@ loop that resumed after a pause, a slow climb in spend.`;
 export async function rollup({
   window,
   priors,
-  config = agentConfig() ?? undefined,
+  config = narrationConfig() ?? undefined,
   deadline,
   linkPath,
   instructions,

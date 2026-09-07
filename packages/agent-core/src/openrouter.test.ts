@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import type { AgentConfig } from "./config.ts";
+import type { NarrationConfig } from "./config.ts";
 import { chat, OpenRouterError, type ToolSpec } from "./openrouter.ts";
 
 /**
@@ -12,7 +12,7 @@ import { chat, OpenRouterError, type ToolSpec } from "./openrouter.ts";
 const config = {
   OPENROUTER_API_KEY: "test",
   AGENT_SELF_MARKER: "marker",
-} as AgentConfig;
+} as unknown as NarrationConfig;
 
 const realFetch = globalThis.fetch;
 afterEach(() => {

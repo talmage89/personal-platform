@@ -185,87 +185,51 @@ describe("bot hygiene", () => {
 });
 
 /**
- * The job endpoint is the only route on the public surface that does real work,
- * so it gets its own budget check rather than riding on the suite above.
+ * The job endpoint is gone, and this is what keeps it gone.
  *
- * The agent log configuration is stripped from the ambient environment first.
- * Bun loads `.env` automatically, so a developer with working credentials in it
- * would otherwise have the "valid token" case below issue a real BigQuery query
- * from a unit test — slow, billable, and passing for the wrong reason.
+ * Scheduled work was once reachable at `POST /internal/jobs/{slug}/{job}`
+ * behind a shared bearer token. That put the most expensive work in the
+ * platform — an agentic summary that reads a day of traffic and calls a model
+ * for minutes — on the public surface, executing inside the web container, for
+ * the convenience of a scheduler that now invokes the job runner directly.
+ *
+ * Anyone re-adding it would be re-adding a standing hole that nothing needs, so
+ * the absence is asserted rather than assumed.
  */
-describe("scheduled jobs", () => {
-  const SECRET = "j".repeat(48);
+describe("scheduled jobs are not reachable over HTTP", () => {
+  const paths = [
+    "/internal/jobs/agent/hourly",
+    "/internal/jobs/agent/catch-up",
+    "/internal/jobs/agent/test-channel",
+  ];
 
-  for (const key of [
-    "AGENT_LOGS_PROJECT",
-    "AGENT_LOGS_DATASET",
-    "AGENT_LOGS_TABLE",
-    "AGENT_LOGS_LOCATION",
-    "OPENROUTER_API_KEY",
-    "AGENT_SUMMARY_MODEL",
-  ]) {
-    delete process.env[key];
-  }
+  // The paths now fall through to the session gate, which redirects to login.
+  // A bearer token is not a session and buys nothing, which is the point.
+  const GATED = [302, 401, 404];
 
-  const withJobs = createServer(
-    parseEnv({
-      NODE_ENV: "test",
-      DB_URL: BLACK_HOLE,
-      SESSION_SECRET: "p".repeat(48),
-      PUBLIC_URL: "http://localhost:8080",
-      GITHUB_CLIENT_ID: "Iv1.test",
-      GITHUB_CLIENT_SECRET: "test-secret",
-      ALLOWED_GITHUB_ID: "583231",
-      JOB_SECRET: SECRET,
-    }),
-  );
+  test("no job can be started by an HTTP request, authenticated or not", async () => {
+    for (const path of paths) {
+      const anonymous = await app.request(path, { method: "POST" });
+      const bearing = await app.request(path, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${"j".repeat(48)}` },
+      });
 
-  const post = (path: string, token?: string) =>
-    withJobs.request(path, {
-      method: "POST",
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    });
+      expect(GATED).toContain(anonymous.status);
+      expect(GATED).toContain(bearing.status);
 
-  test("an unauthenticated call is rejected without touching the database", async () => {
+      // The job runner answers with a status line whatever the environment, so
+      // its absence is what proves nothing ran — not merely a non-200 status.
+      expect(await anonymous.text()).not.toContain("configured");
+      expect(await bearing.text()).not.toContain("configured");
+    }
+  });
+
+  test("the gate answers without touching the database", async () => {
     const started = performance.now();
-    const res = await post("/internal/jobs/agent/hourly");
+    const res = await app.request("/internal/jobs/agent/hourly", { method: "POST" });
 
-    expect(res.status).toBe(401);
+    expect(GATED).toContain(res.status);
     expect(performance.now() - started).toBeLessThan(TIMEOUT_MS);
-  });
-
-  test("a wrong token is rejected", async () => {
-    const res = await post("/internal/jobs/agent/hourly", "x".repeat(48));
-    expect(res.status).toBe(401);
-  });
-
-  test("a token of the wrong length is rejected rather than throwing", async () => {
-    // timingSafeEqual throws on a length mismatch; the comparison has to guard
-    // that itself or this request becomes a 500 instead of a 401.
-    const res = await post("/internal/jobs/agent/hourly", "short");
-    expect(res.status).toBe(401);
-  });
-
-  test("a valid token reaches the job", async () => {
-    const res = await post("/internal/jobs/agent/hourly", SECRET);
-
-    // Configuration was stripped above, so the job short-circuits before any
-    // query. That it answers at all is the proof the route is wired.
-    expect(res.status).toBe(200);
-    expect(await res.text()).toContain("not configured");
-  });
-
-  test("an unknown job is a 404 even with a valid token", async () => {
-    expect((await post("/internal/jobs/agent/nope", SECRET)).status).toBe(404);
-    expect((await post("/internal/jobs/nope/hourly", SECRET)).status).toBe(404);
-  });
-
-  test("without a configured secret the endpoint does not exist", async () => {
-    // `app` is built from an env with no JOB_SECRET.
-    const res = await app.request("/internal/jobs/agent/hourly", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${SECRET}` },
-    });
-    expect(res.status).toBe(404);
   });
 });

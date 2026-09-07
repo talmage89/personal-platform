@@ -1,4 +1,4 @@
-import type { AgentConfig } from "./config.ts";
+import type { NarrationConfig } from "./config.ts";
 
 /**
  * A small OpenRouter client, spoken over its OpenAI-compatible endpoint.
@@ -78,7 +78,11 @@ export interface ChatResult {
   stoppedEarly: string | null;
 }
 
-async function post(config: AgentConfig, body: unknown, signal: AbortSignal): Promise<Completion> {
+async function post(
+  config: NarrationConfig,
+  body: unknown,
+  signal: AbortSignal,
+): Promise<Completion> {
   const res = await fetch(ENDPOINT, {
     method: "POST",
     headers: {
@@ -109,7 +113,7 @@ async function post(config: AgentConfig, body: unknown, signal: AbortSignal): Pr
  * written from partial evidence is worth more than no summary at all, and the
  * arithmetic that surrounds it was never in doubt.
  */
-export async function chat(config: AgentConfig, options: ChatOptions): Promise<ChatResult> {
+export async function chat(config: NarrationConfig, options: ChatOptions): Promise<ChatResult> {
   const { model, system, user, maxTokens, tools = [], maxToolCalls = 0, deadline } = options;
 
   const messages: Message[] = [

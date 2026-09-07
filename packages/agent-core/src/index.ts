@@ -17,6 +17,8 @@ export {
   type DetailBudget,
   type DetailLevel,
   jobDispatchEnabled,
+  type NarrationConfig,
+  narrationConfig,
   resetAgentConfig,
   summaryBudget,
 } from "./config.ts";

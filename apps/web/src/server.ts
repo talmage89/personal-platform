@@ -1,6 +1,6 @@
 import { type AuthEnv, loadSession, requireSession } from "@platform/auth";
 import type { Env as PlatformEnv } from "@platform/core";
-import { mountJobs, mountUtilities, type Utility } from "@platform/utility-kit";
+import { mountUtilities, type Utility } from "@platform/utility-kit";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { serveStatic } from "hono/bun";
@@ -66,12 +66,14 @@ export function createServer(
   app.route("/", createAuthRoutes(env));
   app.route("/", createHomeRoutes(utilities));
 
-  // Scheduled work, reachable without a session because a scheduler has none.
-  // It sits on the public surface and obeys its rule: the bearer token is
-  // compared before anything else runs, so an unauthenticated request does no
-  // work and issues no query. The perimeter test holds it to that.
-  mountJobs(app, utilities, env.JOB_SECRET);
   // ---- end public surface ----
+  //
+  // Nothing schedulable is mounted here. Scheduled work used to be reachable at
+  // POST /internal/jobs/{slug}/{job} behind a bearer token, which meant the
+  // most expensive work in the platform could be started by anyone holding one
+  // string, and ran inside this container while it did. The scheduler invokes
+  // the job runner directly instead, so that endpoint protected nothing that
+  // still needed protecting and is gone.
 
   app.use("/*", requireSession());
 

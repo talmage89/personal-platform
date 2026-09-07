@@ -2,6 +2,7 @@ import {
   advanceInterval,
   agentConfig,
   completionMessage,
+  narrationConfig,
   nextWindow,
   notificationsEnabled,
   probeDue,
@@ -135,7 +136,10 @@ async function heartbeat(now: Date): Promise<string | null> {
  * several ticks rather than in one enormous query.
  */
 export async function hourly(): Promise<string> {
-  if (!agentConfig()) return "not configured; nothing to do";
+  // Narration config, not the base one: this path spends money, and a
+  // deployment without a broker key should say so plainly rather than fail
+  // partway through with a 401 from the broker.
+  if (!narrationConfig()) return "no model configured; nothing to do";
 
   const now = new Date();
   const probe = await heartbeat(now);
@@ -235,7 +239,7 @@ const MAX_CATCH_UP_HOURS = 24;
  * returned line either way.
  */
 export async function catchUpSince(since?: string): Promise<string> {
-  if (!agentConfig()) return "not configured; nothing to do";
+  if (!narrationConfig()) return "no model configured; nothing to do";
 
   const now = new Date();
   const floor = new Date(now.getTime() - MAX_CATCH_UP_HOURS * 3_600_000);

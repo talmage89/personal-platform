@@ -1,5 +1,5 @@
 import { fetchCalls } from "./bigquery.ts";
-import { type AgentConfig, agentConfig } from "./config.ts";
+import { type NarrationConfig, narrationConfig } from "./config.ts";
 import { type NarrateOptions, narrate } from "./narrate.ts";
 import type { Alert } from "./notify.ts";
 import { analyse, baselineFrom } from "./stats.ts";
@@ -28,7 +28,7 @@ export interface SummarizeOptions {
   history: HistoryEntry[];
   /** Models seen before now. Used only to notice a first appearance. */
   knownModels: ReadonlySet<string>;
-  config?: AgentConfig;
+  config?: NarrationConfig;
   /** Passed through to the narrator: detail budget, model, deadline, tools. */
   narration?: NarrateOptions;
 }
@@ -44,7 +44,7 @@ export async function summarizeWindow({
   window,
   history,
   knownModels,
-  config = agentConfig() ?? undefined,
+  config = narrationConfig() ?? undefined,
   narration,
 }: SummarizeOptions): Promise<Summary> {
   if (!config) throw new NotConfiguredError();

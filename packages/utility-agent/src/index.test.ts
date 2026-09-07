@@ -16,11 +16,12 @@ describe("the agent utility", () => {
     expect(Object.keys(agent.jobs ?? {})).toEqual(["hourly", "catch-up", "test-channel"]);
   });
 
-  test("the job is a no-op when no log source is configured", async () => {
-    // The web deployment imports this package to mount the page. If the job
-    // threw on an unconfigured environment, a scheduler pointed at a fresh
+  test("the narrating job is a no-op without the means to call a model", async () => {
+    // The web deployment imports this package to mount the page, and is
+    // deliberately given no broker key — the pages only read stored summaries.
+    // If the job threw on that environment, a scheduler pointed at a fresh
     // deploy would page someone about a deliberate state.
     const run = agent.jobs?.hourly;
-    expect(await run?.()).toBe("not configured; nothing to do");
+    expect(await run?.()).toBe("no model configured; nothing to do");
   });
 });

@@ -1,4 +1,3 @@
-import { timingSafeEqual } from "node:crypto";
 import type { AuthEnv } from "@platform/auth";
 import type { Hono } from "hono";
 
@@ -19,9 +18,13 @@ export interface Utility {
   /**
    * Work invoked by a scheduler rather than by a browser, keyed by name.
    *
-   * These are deliberately *not* part of `routes`: routes live behind the
-   * session gate, and a scheduler has no session. `mountJobs` exposes them
-   * separately, behind a shared secret. The returned string is logged.
+   * Reachable only from the job entrypoint — `bun dist/job.js <slug> <job>` —
+   * and never over HTTP. These used to be mounted at `POST /internal/jobs/...`
+   * behind a shared secret, which put the heaviest and most expensive work in
+   * the platform on the public surface, running inside the web container, for
+   * the convenience of a scheduler that no longer uses it. The scheduler calls
+   * the job runner directly now, so the endpoint bought nothing and cost a
+   * standing bearer-authenticated hole. The returned string is logged.
    */
   jobs?: Readonly<Record<string, (...args: string[]) => Promise<string>>>;
 }
@@ -41,7 +44,8 @@ const RESERVED_SLUGS = new Set([
   "fonts",
   "styles.css",
   "robots.txt",
-  // Jobs are mounted under /internal, ahead of the gate.
+  // Nothing mounts here now, but the prefix stays spoken-for: it reads as
+  // platform-internal, and a utility claiming it would be a confusing surprise.
   "internal",
 ]);
 
@@ -74,58 +78,4 @@ export function mountUtilities(app: Hono<AuthEnv>, utilities: readonly Utility[]
     claimed.add(slug);
     app.route(`/${slug}`, utility.routes);
   }
-}
-
-/**
- * Constant-time comparison of a presented token against the configured one.
- *
- * Length is compared first because `timingSafeEqual` throws on a length
- * mismatch rather than returning false — and the length of a secret is not
- * worth leaking through which of those two happens.
- */
-function tokenMatches(presented: string, expected: string): boolean {
-  const a = Buffer.from(presented);
-  const b = Buffer.from(expected);
-  return a.length === b.length && timingSafeEqual(a, b);
-}
-
-/**
- * Mounts every registered job at `POST /internal/jobs/{slug}/{job}`.
- *
- * This is the one route in the platform that is reachable without a session, so
- * it is written to the same standard as the rest of the public surface: the
- * bearer token is checked before anything else happens, and a request that
- * fails that check does no work and touches no database. The perimeter test
- * covers it for exactly that reason.
- *
- * A missing or empty secret disables the endpoint outright rather than leaving
- * it open — an unconfigured deployment should have no schedulable surface at
- * all, and 404 keeps its existence uninteresting to anyone probing.
- */
-export function mountJobs(
-  app: Hono<AuthEnv>,
-  utilities: readonly Utility[],
-  secret: string | undefined,
-): void {
-  app.post("/internal/jobs/:slug/:job", async (c) => {
-    if (!secret) return c.notFound();
-
-    const header = c.req.header("Authorization") ?? "";
-    const presented = header.startsWith("Bearer ") ? header.slice(7) : "";
-    if (!tokenMatches(presented, secret)) return c.text("unauthorized", 401);
-
-    const utility = utilities.find((u) => u.slug === c.req.param("slug"));
-    const run = utility?.jobs?.[c.req.param("job") ?? ""];
-    if (!run) return c.notFound();
-
-    try {
-      return c.text(await run());
-    } catch (error) {
-      // Reported as text so the scheduler's own logs carry the reason; a
-      // scheduler that only ever sees "500" is a scheduler nobody debugs.
-      console.error("job failed", error);
-      const message = error instanceof Error ? error.message : String(error);
-      return c.text(`job failed: ${message}`, 500);
-    }
-  });
 }
