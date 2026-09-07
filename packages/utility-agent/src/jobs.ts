@@ -41,7 +41,7 @@ import {
  * more than an ordinary hour needs and still leaves the next tick a clear run
  * at its own window.
  */
-const HOURLY_BUDGET_MS = 15 * 60_000;
+const HOURLY_BUDGET_MS = 30 * 60_000;
 
 /**
  * The button, by contrast, is answering a browser. This has to stay comfortably
@@ -214,7 +214,7 @@ export async function catchUp(
  * As a job there is no browser waiting, so the work gets a real budget rather
  * than one shaped by a request timeout.
  */
-const CATCH_UP_JOB_BUDGET_MS = 20 * 60_000;
+const CATCH_UP_JOB_BUDGET_MS = 45 * 60_000;
 
 /**
  * A catch-up covering the last day, runnable without a browser.

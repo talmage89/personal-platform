@@ -1,4 +1,4 @@
-import { type AgentConfig, selfModels, tableRef } from "./config.ts";
+import { type AgentConfig, selfKeyNames, tableRef } from "./config.ts";
 import type { Call, Window } from "./types.ts";
 
 /**
@@ -23,6 +23,9 @@ const EXCERPT_CHARS = 2_000;
  * and `truncated` says so rather than the summary quietly describing a slice.
  */
 const ROW_LIMIT = 5_000;
+
+/** Characters of dialog per call in the window read and in a search hit. */
+const SEARCH_EXCERPT_CHARS = 4_000;
 
 let tokenCache: { token: string; expiresAt: number } | undefined;
 
@@ -162,55 +165,60 @@ async function runQuery(
 /**
  * Which observations are actually model calls, and whose.
  *
- * Two filters that were both missing, and together they made every number on
- * the page wrong by a factor of three and pointed the summariser at itself.
- *
  * `type = 'GENERATION'` — a trace carries SPAN observations alongside the
  * generation, two of them per call in practice. Counting all of them inflated
- * the call count 3x, invented an `(unknown)` model for the spans, and made the
- * repetition detector fire on every window: spans share their trace's input, so
- * "consecutive identical prompts" was true by construction.
+ * the call count 3x (270 where there were 90), invented an `(unknown)` model
+ * for the spans, and made the repetition detector fire on every window: spans
+ * share their trace's input, so "consecutive identical prompts" was true by
+ * construction. Verified against real data — with this filter, every hour's
+ * prompts are distinct.
  *
- * The model filter is the self-exclusion. It was supposed to work off a marker
- * sent in the request's `user` field, but the broker does not persist that into
- * the trace — verified against real data, where the marker appears in exactly
- * zero rows. So the summariser was reading its own traffic, flagging itself for
- * a cost spike, and doing it again an hour later on a larger window.
+ * The self-exclusion keys on `apiKeyName`, and on nothing else.
  *
- * Excluding by model is imperfect: point the agent at the same model as the
- * summariser and its calls vanish from its own report. The durable fix is a
- * separate broker key for the summariser with broadcasting switched off, which
- * removes the traffic at source instead of filtering it afterwards. The marker
- * check stays as well, in case the broker starts persisting it.
+ * It first used a marker in the request's `user` field, which the broker does
+ * not persist — zero rows carry it. The obvious next guess, excluding the
+ * summariser's own model, is *worse than useless*: the agent being watched may
+ * run the same model as the summariser, and here it does, so that filter
+ * removed 100% of the traffic it was supposed to report on. It shipped briefly
+ * and is the reason this comment is long.
+ *
+ * A key name is the only thing in a trace that distinguishes who made the call
+ * and cannot collide with a legitimate choice the agent makes. It is opt-in and
+ * empty by default: configure it only once the summariser has a broker key of
+ * its own, and until then nothing is excluded — over-reporting the summariser's
+ * own traffic is a visible, cheap mistake, whereas silently dropping the
+ * agent's is neither.
  */
-const ONLY_REAL_CALLS = `AND JSON_VALUE(o, '$.type') = 'GENERATION'
-  AND NOT CONTAINS_SUBSTR(TO_JSON_STRING(trace), @selfMarker)
-  AND IFNULL(JSON_VALUE(o, '$.model'), '') NOT IN UNNEST(@selfModels)`;
-
-/**
- * The table stores `trace` as a single JSON column, so every field is read
- * through a JSON accessor rather than dotted access.
- *
- * This is not a stylistic choice. The table was originally created with an
- * auto-detected schema, which inferred `input.messages[].content` as STRING
- * from early text-only traces. The moment the agent used tool calls, `content`
- * became an array of content parts — and a type conflict in one file fails
- * *every* query touching that partition, not just that row.
- * `ignore_unknown_values` does not help: it forgives unknown fields, not fields
- * whose type disagrees with the schema.
- *
- * Typing the whole record as JSON removes the entire class of failure. The
- * broker can add fields, change a scalar to an object, or return null where a
- * string used to be, and the reader keeps working. Everything below uses SAFE
- * variants for the same reason: one malformed value yields NULL for that row
- * instead of failing the query that was supposed to notice it.
- */
-// `at` is a reserved word in GoogleSQL, so the alias is backticked everywhere
-// it appears. Without that the query fails to parse — and it fails at run time,
-// not at build time, which is why it survived a typecheck and a test suite.
 const AT = "SAFE.TIMESTAMP(JSON_VALUE(trace, '$.timestamp'))";
 const int64 = (path: string) => `IFNULL(SAFE_CAST(JSON_VALUE(o, '$.${path}') AS INT64), 0)`;
 const COST = "IFNULL(SAFE_CAST(JSON_VALUE(o, '$.totalCost') AS FLOAT64), 0.0)";
+
+/**
+ * The excerpt: a little of the head, then the tail.
+ *
+ * It used to be the first N characters of the request payload, which for a
+ * coding agent is the system prompt and nothing else. Every sampled call looked
+ * identical, so the model spent its entire lookup budget discovering that the
+ * previews were useless — it said so, in a stored summary: "the sampled
+ * snippets only show the fixed system-prompt prefix, so the actual tool
+ * activity stays invisible".
+ *
+ * The head is kept because it says what the agent was set up to do; the tail is
+ * where what it actually just did lives — the latest turn and its tool results.
+ * The middle is the part nobody needed.
+ */
+const HEAD_CHARS = 400;
+const excerpt = (chars: number) => {
+  const js = "TO_JSON_STRING(JSON_QUERY(trace, '$.input'))";
+  return `IF(LENGTH(${js}) <= ${chars},
+    ${js},
+    CONCAT(SUBSTR(${js}, 1, ${HEAD_CHARS}), '\\n[…]\\n',
+           SUBSTR(${js}, LENGTH(${js}) - ${chars - HEAD_CHARS} + 1)))`;
+};
+
+const ONLY_REAL_CALLS = `AND JSON_VALUE(o, '$.type') = 'GENERATION'
+  AND NOT CONTAINS_SUBSTR(TO_JSON_STRING(trace), @selfMarker)
+  AND IFNULL(JSON_VALUE(trace, '$.apiKeyName'), '') NOT IN UNNEST(@selfKeys)`;
 
 const SQL = (table: string) => `
 SELECT
@@ -225,7 +233,7 @@ SELECT
   IFNULL(JSON_VALUE(o, '$.level'), 'DEFAULT')          AS level,
   JSON_VALUE(o, '$.statusCode')                        AS statusCode,
   IFNULL(JSON_VALUE(o, '$.normalizedFinishReason'), JSON_VALUE(o, '$.finishReason')) AS finishReason,
-  SUBSTR(TO_JSON_STRING(JSON_QUERY(trace, '$.input')), 1, @excerpt) AS inputExcerpt
+  ${excerpt(EXCERPT_CHARS)} AS inputExcerpt
 FROM ${table}, UNNEST(JSON_QUERY_ARRAY(trace, '$.observations')) AS o
 WHERE dt BETWEEN @dtStart AND @dtEnd
   AND ${AT} >= @start
@@ -242,7 +250,7 @@ SELECT
   ${AT}                                         AS \`at\`,
   IFNULL(JSON_VALUE(o, '$.model'), '(unknown)') AS model,
   ${int64("promptTokens")}                      AS promptTokens,
-  SUBSTR(TO_JSON_STRING(JSON_QUERY(trace, '$.input')), 1, @excerpt) AS inputExcerpt
+  ${excerpt(EXCERPT_CHARS)} AS inputExcerpt
 FROM ${table}, UNNEST(JSON_QUERY_ARRAY(trace, '$.observations')) AS o
 WHERE dt BETWEEN @dtStart AND @dtEnd
   AND ${AT} >= @start
@@ -352,7 +360,7 @@ export async function fetchCalls(
     int("excerpt", EXCERPT_CHARS),
     int("rowLimit", ROW_LIMIT),
     str("selfMarker", config.AGENT_SELF_MARKER),
-    strArray("selfModels", selfModels(config)),
+    strArray("selfKeys", selfKeyNames(config)),
   ];
 
   const { rows, truncated, bytesProcessed } = await runQuery(
@@ -367,7 +375,6 @@ export async function fetchCalls(
 
 /** Cap on one search. Wide enough to be useful, narrow enough to stay a probe. */
 const SEARCH_LIMIT = 25;
-const SEARCH_EXCERPT_CHARS = 4_000;
 
 export interface DialogHit {
   traceId: string;
@@ -399,7 +406,7 @@ export async function searchDialog(
     int("excerpt", SEARCH_EXCERPT_CHARS),
     int("rowLimit", capped),
     str("selfMarker", config.AGENT_SELF_MARKER),
-    strArray("selfModels", selfModels(config)),
+    strArray("selfKeys", selfKeyNames(config)),
   ];
 
   const { rows, truncated } = await runQuery(config, SEARCH_SQL(tableRef(config)), params, capped);
@@ -475,7 +482,7 @@ export async function aggregateSpan(config: AgentConfig, window: Window): Promis
   const params = [
     ...windowParams(window),
     str("selfMarker", config.AGENT_SELF_MARKER),
-    strArray("selfModels", selfModels(config)),
+    strArray("selfKeys", selfKeyNames(config)),
   ];
 
   const { rows } = await runQuery(

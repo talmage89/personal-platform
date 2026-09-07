@@ -44,28 +44,28 @@ export interface DetailBudget {
 
 export const BUDGETS: Record<DetailLevel, DetailBudget> = {
   brief: {
-    sampleSize: 6,
-    sampleChars: 400,
-    maxTokens: 1_200,
-    maxToolCalls: 0,
+    sampleSize: 8,
+    sampleChars: 800,
+    maxTokens: 2_000,
+    maxToolCalls: 2,
     instruction:
       "Be terse. Two or three sentences unless something was flagged, in which case one short paragraph.",
   },
   standard: {
-    sampleSize: 12,
-    sampleChars: 600,
-    maxTokens: 4_000,
-    maxToolCalls: 4,
+    sampleSize: 20,
+    sampleChars: 1_400,
+    maxTokens: 8_000,
+    maxToolCalls: 24,
     instruction:
-      "Two to four short paragraphs. Read more dialog only if the sample leaves a flag genuinely unexplained.",
+      "Read what you need to. The sample is a starting point, not the evidence — if a flag or a fragment is unexplained, go and look before writing. Two to five paragraphs.",
   },
   deep: {
-    sampleSize: 24,
-    sampleChars: 1_200,
-    maxTokens: 8_000,
-    maxToolCalls: 16,
+    sampleSize: 40,
+    sampleChars: 2_000,
+    maxTokens: 16_000,
+    maxToolCalls: 60,
     instruction:
-      "Investigate before writing. Use the tools to check anything the sample only hints at, and say what you looked at. Four to eight paragraphs.",
+      "Investigate thoroughly before writing. Follow anything that looks consequential — a host contacted, a credential read, a command that wrote or deleted — until you can say what actually happened. Say what you looked at. Five to ten paragraphs.",
   },
 };
 
@@ -114,6 +114,13 @@ const schema = z.object({
    * Worth changing only if the agent could plausibly emit this string itself.
    */
   AGENT_SELF_MARKER: z.string().min(8).default("platform-summarizer-do-not-summarize"),
+
+  /**
+   * Broker key name(s) the summariser itself uses, comma-separated, excluded
+   * from every read. Absent excludes nothing — see selfKeyNames below for why
+   * that is the safe default.
+   */
+  AGENT_SELF_KEY_NAMES: z.string().optional(),
 
   /**
    * Escape hatch for local development, where there is no metadata server to
@@ -168,13 +175,19 @@ export const catchupModel = (config: AgentConfig): string =>
   config.AGENT_CATCHUP_MODEL ?? config.AGENT_SUMMARY_MODEL;
 
 /**
- * Models the summariser itself uses.
+ * Broker key names belonging to the summariser, excluded from every read.
  *
- * Excluded from every read, because the summariser's own traffic goes through
- * the same broker as the agent's and is broadcast into the table it reads.
- * See ONLY_REAL_CALLS in bigquery.ts for why this is done by model rather than
- * by the marker it was originally meant to use.
+ * Empty by default, which excludes nothing. Set it only once the summariser has
+ * its own key: the alternative discriminators are all worse. A marker in the
+ * `user` field is not persisted by the broker, and the summariser's *model* is
+ * not distinguishing at all when the agent under observation runs the same one
+ * — which it does, and which made that filter erase every call it was meant to
+ * report.
+ *
+ * Comma-separated, matched exactly against `trace.apiKeyName`.
  */
-export const selfModels = (config: AgentConfig): string[] => [
-  ...new Set([config.AGENT_SUMMARY_MODEL, config.AGENT_CATCHUP_MODEL].filter(Boolean) as string[]),
-];
+export const selfKeyNames = (config: AgentConfig): string[] =>
+  (config.AGENT_SELF_KEY_NAMES ?? "")
+    .split(",")
+    .map((name) => name.trim())
+    .filter(Boolean);

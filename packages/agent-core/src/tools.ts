@@ -18,8 +18,8 @@ import type { Call, Window } from "./types.ts";
  */
 
 /** Per-tool-call cap on returned dialog. The budget is turns, not tokens. */
-const MAX_RETURNED = 12;
-const EXCERPT_CHARS = 1_800;
+const MAX_RETURNED = 25;
+const EXCERPT_CHARS = 3_000;
 
 function renderCall(call: Call, body: string): string {
   return [
@@ -51,7 +51,7 @@ export function logTools(config: AgentConfig, window: Window, calls: Call[]): To
           offset: { type: "integer", description: "0-based position in the window", minimum: 0 },
           limit: {
             type: "integer",
-            description: "how many to return, 1-12",
+            description: "how many to return, 1-25",
             minimum: 1,
             maximum: MAX_RETURNED,
           },
