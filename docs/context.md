@@ -237,4 +237,4 @@ Not oversights. Raise them if the tradeoff changes.
 ## The one rule
 
 If you remember nothing else: **the public surface issues zero database queries.** Landing
-page, static assets, `/healthz`, and the entire login flow. Everything else is negotiable.
+page, static assets, `/livez`, and the entire login flow. Everything else is negotiable.

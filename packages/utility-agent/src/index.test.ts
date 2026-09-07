@@ -9,8 +9,11 @@ describe("the agent utility", () => {
     expect(() => mountUtilities(new Hono(), [agent])).not.toThrow();
   });
 
-  test("exposes exactly one scheduled job", () => {
-    expect(Object.keys(agent.jobs ?? {})).toEqual(["hourly"]);
+  test("exposes exactly the scheduled jobs the deployment schedules", () => {
+    // Pinned rather than counted: a job appearing here without a scheduler
+    // entry never runs, and one disappearing leaves a scheduler calling a name
+    // that 404s. Either way the list is the contract, so it is written out.
+    expect(Object.keys(agent.jobs ?? {})).toEqual(["hourly", "test-channel"]);
   });
 
   test("the job is a no-op when no log source is configured", async () => {

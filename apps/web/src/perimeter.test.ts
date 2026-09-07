@@ -79,7 +79,7 @@ describe("public perimeter (database unreachable)", () => {
   });
 
   test("health responds", async () => {
-    const res = await withinBudget("/healthz");
+    const res = await withinBudget("/livez");
     expect(res.status).toBe(200);
   });
 
@@ -201,7 +201,8 @@ describe("scheduled jobs", () => {
     "AGENT_LOGS_DATASET",
     "AGENT_LOGS_TABLE",
     "AGENT_LOGS_LOCATION",
-    "ANTHROPIC_API_KEY",
+    "OPENROUTER_API_KEY",
+    "AGENT_SUMMARY_MODEL",
   ]) {
     delete process.env[key];
   }

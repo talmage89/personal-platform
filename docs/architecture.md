@@ -24,7 +24,7 @@ able to wake the database. This is not a nice-to-have; it is the constraint the 
 architecture is arranged around. Four rules follow, in priority order:
 
 **1. The public surface issues zero queries.** Landing page, `robots.txt`, favicon,
-stylesheet, `/healthz`, and *the entire login flow* never touch the DB. Login is verified
+stylesheet, `/livez`, and *the entire login flow* never touch the DB. Login is verified
 against an env allowlist, so an attacker hammering `/auth/*` burns CPU and nothing else.
 
 **2. Sessions are stateless.** The cookie is `payload.hmac`; verification is a hash, not a
@@ -141,7 +141,7 @@ personal-platform/
 │           └── routes/
 │               ├── landing.tsx     # public "/", zero DB
 │               ├── directory.tsx   # authed "/", renders the registry
-│               ├── health.ts       # /healthz, zero DB
+│               ├── health.ts       # /livez, zero DB
 │               └── not-found.tsx
 │
 └── packages/
@@ -152,7 +152,7 @@ personal-platform/
     ├── charts/                     @platform/charts   server-rendered SVG
     ├── utility-kit/                @platform/utility-kit   the Utility contract
     ├── utility-weight/             @platform/utility-weight   daily weigh-ins
-    ├── agent-core/                 @platform/agent-core    stats, redaction, narration
+    ├── agent-core/                 @platform/agent-core    stats, redaction, narration, tools
     └── utility-agent/              @platform/utility-agent hourly agent summaries
 ```
 
@@ -206,7 +206,7 @@ can never drift from what's actually mounted.
 
 ```
 requestId → logger → secureHeaders → trimTrailingSlash → bodyLimit → compress
-  ├ /healthz                        public, zero DB
+  ├ /livez                        public, zero DB
   ├ static: public/                 zero DB
   ├ /auth/*      rateLimit          zero DB
   ├ /            session? directory : landing     zero DB either way
@@ -359,15 +359,107 @@ invocation, so a long outage recovers over several ticks rather than in one
 enormous query. The on-demand button covers whatever the schedule has not
 reached, capped at a day so that a fortnight away is not one unbounded query.
 
-Both paths end in the same `summarizeWindow`, so they cannot drift into
-disagreeing about what a summary is.
+### A catch-up is not a summary of summaries
+
+"What has happened since I last looked" has an obvious implementation — feed the
+hourly summaries to a model and ask it to condense them — and that
+implementation throws away the thing that made the hourly summaries worth
+keeping. A number that has been through two models is an impression.
+
+So `rollup.ts` reuses only prose:
+
+- **Every figure is recomputed from the source**, in SQL, over the whole period.
+  Not added up from the stored rows, not restated by a model. `aggregateSpan`
+  does this in the warehouse, which is also the only way it stays exact — the
+  row read is capped at 5,000 calls, which is right for an hour and would
+  silently describe a slice of a fortnight.
+- **Flags are carried across verbatim** from the hours that produced them. Each
+  was computed on that hour's complete data; merging them cannot make them less
+  true, and recomputing them over a truncated span could. Repeats collapse to
+  one line that says how many hours it appeared in.
+- **The hourly narratives are context, not evidence.** The model is told they
+  are prior reporting and that anything load-bearing should be checked against
+  the dialog — which it can do, because it has the same tools.
+
+Hours inside the period with no summary are reported rather than quietly
+skipped: a gap means the summariser did not run, which is a different finding
+from a quiet hour.
+
+### Reading, not just sampling
+
+The fixed sample answers "what was this hour about". The follow-up question is
+the one a person actually asks, so the summariser can go and look: `read_dialog`
+pages through the window (served from memory — the calls were already fetched to
+compute the arithmetic, so this costs nothing), `search_dialog` finds a hostname
+or an error string across it, `read_trace` opens one exchange in full.
+
+The loop is bounded three ways — call count, wall clock, and a per-request
+timeout — because it runs unattended and a model that decides to read the whole
+day one page at a time is a cost incident, not a feature. Hitting a bound is
+never fatal: tools are withheld and the model is asked once more for the
+write-up, so a bounded run still produces prose. What it read is stored
+alongside the summary, because a narrative that investigated and a narrative
+that guessed read exactly alike.
+
+### The summariser must not summarise itself
+
+Its own calls go through the same broker as the agent's, so they are broadcast
+into the very table it reads. Every request carries `AGENT_SELF_MARKER` in its
+`user` field and every read excludes it. Without that, each hour would report on
+the previous hour's report, and the arithmetic would count the cost of watching
+as the cost of working.
+
+### The channel that cannot ring
+
+An urgent finding is pushed to Telegram — a bot token and a chat id, no app to
+publish and nothing to keep alive between messages. The model decides, through a
+`send_alert` tool, because the flags are arithmetic: they catch a cost spike and
+a repetition loop, but not "the agent is reading credentials out of the
+environment", which has no numeric signature and is the thing actually worth
+waking someone for. Alerting has its own small budget so that it still works at
+`brief`, where the budget for looking things up is zero.
+
+A notification path nobody has exercised is indistinguishable from a quiet week,
+right up until the moment it matters. So the summariser proves the channel:
+hourly at first, then doubling — 2h, 4h, 8h, … — to a floor of one probe a week.
+Any successful send counts as proof, so a channel carrying real alerts sends no
+probes at all, and a failed send is recorded and shown on the page.
+
+### Prompts are edited, not deployed
+
+The two instructions that decide what a summary is *about* — the hourly briefing
+and the catch-up — live in `AgentPrompt` rather than in the build. The useful
+edits are the ones you think of while reading a summary that missed something,
+and a redeploy between having the thought and testing it is enough friction that
+the thought does not get tested.
+
+The compiled-in defaults stay authoritative: a row exists only when the prompt
+has been changed, so *absence means default*, resetting is a delete, and text
+edited back to match the default deletes the row rather than storing a copy.
+
+Detail — how much is read and how long the write-up runs — stays in the
+environment, as `brief | standard | deep`. It is a named level rather than six
+numbers because the levels move sample size, output length and tool budget
+together, and moving them independently mostly produces incoherent combinations.
 
 ### Jobs, and the one hole in the perimeter
 
 A scheduler has no session, so scheduled work cannot live behind the gate. The
-`Utility` contract therefore grew an optional `jobs` map, and `mountJobs` exposes
-them at `POST /internal/jobs/{slug}/{job}` — above `requireSession`, on the
-public surface.
+`Utility` contract therefore grew an optional `jobs` map, reachable two ways.
+
+**As a job, for scheduled work.** `apps/web/src/job.ts` is a second entry point
+built into the same image: `bun dist/job.js agent hourly`. Scheduled work used to
+arrive as an HTTP request to the running service, which meant every summary had
+to finish inside a request timeout — and an agentic summary that reads around
+the window cannot promise that. As a Cloud Run job there is no request behind it
+and no timeout to beat; the work is bounded by its own deadline, in code, where
+the reason for the bound is visible. Exit 2 for "no such job" is distinct from
+exit 1 for "it ran and failed", because a scheduler retries one and not the
+other.
+
+**Over HTTP, for the button.** `mountJobs` exposes them at
+`POST /internal/jobs/{slug}/{job}` — above `requireSession`, on the public
+surface.
 
 It obeys the public surface's rule. The bearer token is compared in constant
 time before anything else runs, so an unauthenticated request does no work and
@@ -376,7 +468,8 @@ leaving it open. The perimeter test covers all of it, including the token of the
 wrong length — `timingSafeEqual` throws rather than returning false on a length
 mismatch, which would otherwise turn a 401 into a 500.
 
-The test strips `AGENT_LOGS_*` from the environment before building its server.
+The test strips `AGENT_LOGS_*`, `OPENROUTER_API_KEY` and `AGENT_SUMMARY_MODEL`
+from the environment before building its server.
 Bun loads `.env` automatically, so without that a developer with working
 credentials would have the "valid token" case issue a real BigQuery query from a
 unit test — slow, billable, and passing for the wrong reason.
@@ -506,7 +599,7 @@ Zod-validated at boot, fail fast. `DB_URL` is validated for *shape* only — nev
 
 | Phase | |
 |---|---|
-| 0 | ✅ Workspaces, tsconfig, biome, compose, Dockerfile, env schema, `/healthz` |
+| 0 | ✅ Workspaces, tsconfig, biome, compose, Dockerfile, env schema, `/livez` |
 | 1 | ✅ Landing page, GitHub OAuth, session, gate, rate limit, **perimeter test** |
 | 2 | ✅ Shared UI package, utility contract, directory page, weight *placeholder* |
 | 3 | Ship: `@platform/db`, image size pass, Neon project + 5-min suspend, deploy |

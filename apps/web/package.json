@@ -10,10 +10,11 @@
     "dev:css": "tailwindcss -i src/styles.css -o public/styles.css --watch",
     "build": "run-s build:css build:server",
     "build:css": "tailwindcss -i src/styles.css -o public/styles.css --minify",
-    "build:server": "bun build src/index.ts --outdir dist --target bun --minify --sourcemap=linked",
+    "build:server": "bun build src/index.ts src/job.ts --outdir dist --target bun --minify --sourcemap=linked",
     "start": "NODE_ENV=production bun dist/index.js",
     "check:types": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test",
+    "job": "NODE_ENV=production bun dist/job.js"
   },
   "dependencies": {
     "@platform/auth": "workspace:*",

@@ -47,6 +47,20 @@ model AgentSummary {
 
   narrative String
 
+  /// `[{ name, args, ok }]` — what the summariser went and read beyond the
+  /// sample it was handed. Nullable because summaries written before the
+  /// summariser could investigate have nothing to record here, and an empty
+  /// array would claim it looked and found nothing.
+  investigation Json?
+
+  /// `[{ severity, message, sentAt }]` — push notifications this summary sent.
+  alerts Json?
+
+  /// What writing the summary cost, in millionths of a dollar. Kept apart from
+  /// `costMicroUsd` on purpose: one is the agent's spend and the other is the
+  /// price of watching it, and adding them together would flatter neither.
+  narrationMicroUsd Int @default(0)
+
   createdAt DateTime @default(now())
 
   /// Makes a re-run idempotent: replaying the same scheduled window updates the
@@ -61,6 +75,50 @@ model AgentView {
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   lastViewedAt DateTime
+
+  updatedAt DateTime @updatedAt
+}
+
+/// State of the push channel. A single row, id "default".
+///
+/// Exists so the summariser can prove the channel still works. A notification
+/// path nobody has exercised is indistinguishable from a quiet week right up
+/// until the moment it matters, so a probe goes out on a widening interval —
+/// hourly at first, then doubling to a weekly floor of confidence. Any real
+/// alert resets the clock, so a channel in active use sends no probes at all.
+model AgentChannel {
+  id String @id @default("default")
+
+  /// When anything last arrived on the channel, probe or alert.
+  lastSendAt DateTime?
+
+  /// Current gap between probes, in minutes. Doubles after each one.
+  intervalMinutes Int @default(60)
+
+  /// Set when a send failed, cleared when one succeeds. Surfaced on the page,
+  /// because a broken channel is itself the alarm that cannot ring.
+  lastError String?
+
+  updatedAt DateTime @updatedAt
+}
+
+/// Which prompt. `hourly` writes up one window; `recap` accounts for many.
+enum AgentPromptKind {
+  hourly
+  recap
+}
+
+/// An edited prompt, overriding the one compiled into the build.
+///
+/// A row exists only when the prompt has been changed — absence means "use the
+/// default", so resetting is a delete and the defaults stay in code where they
+/// are reviewed and versioned. The useful edits here are the ones you think of
+/// after reading a summary that missed something, and waiting for a deploy to
+/// try them is the difference between tuning this and not bothering.
+model AgentPrompt {
+  kind AgentPromptKind @id
+
+  body String
 
   updatedAt DateTime @updatedAt
 }

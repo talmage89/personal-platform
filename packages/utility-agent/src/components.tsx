@@ -117,3 +117,104 @@ export function NotConfigured() {
     </AgentPage>
   );
 }
+
+/**
+ * One line per window, for scanning a lot of them.
+ *
+ * The overview shows summaries in full because it shows a handful; this is the
+ * other question — "when did that start" — and answering it means fitting a day
+ * on a screen. Everything here is fixed-width or truncated so the columns line
+ * up down the page and a concern is visible without reading any of it.
+ */
+export function SummaryRow({ summary }: { summary: StoredSummary }) {
+  const severity = worstSeverity(summary.flags);
+
+  return (
+    <li class="border-current/10 border-b">
+      <a href={`/agent/summaries/${summary.id}`} class="block py-3 no-underline hover:bg-current/5">
+        <div class="flex flex-wrap items-baseline justify-between gap-x-4">
+          <span class="tabular-nums">
+            {severity === "concern" ? "! " : severity === "notice" ? "· " : "  "}
+            {formatWindow(summary.periodStart, summary.periodEnd)}
+          </span>
+          <span class="text-muted text-sm tabular-nums">
+            {formatCount(summary.callCount)} calls · {formatCost(summary.costUsd)}
+            {summary.kind === "manual" ? " · on demand" : ""}
+          </span>
+        </div>
+        <p class="mt-1 line-clamp-2 text-muted text-sm">{firstSentences(summary.narrative)}</p>
+      </a>
+    </li>
+  );
+}
+
+/** Enough of the narrative to recognise the hour, without the whole thing. */
+function firstSentences(narrative: string, max = 180): string {
+  const flat = narrative.replace(/\s+/g, " ").trim();
+  return flat.length <= max ? flat : `${flat.slice(0, max).replace(/\s\S*$/, "")}…`;
+}
+
+/**
+ * What the summariser went and read.
+ *
+ * Shown because a narrative that checked and a narrative that guessed read
+ * exactly alike, and the difference is the reason to believe this page.
+ */
+export function Investigation({ calls }: { calls: { name: string; args: string; ok: boolean }[] }) {
+  if (calls.length === 0) return null;
+
+  return (
+    <details class="mt-3">
+      <summary class="cursor-pointer text-muted text-sm">
+        looked at {calls.length} thing{calls.length === 1 ? "" : "s"}
+      </summary>
+      <ul class="mt-2">
+        {calls.map((call, index) => (
+          <li key={index} class="text-muted text-sm">
+            <code>{call.name}</code> {call.args}
+            {call.ok ? "" : " — failed"}
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
+/** Notifications this summary pushed. Rare by design, so never collapsed. */
+export function Alerts({ alerts }: { alerts: { severity: string; message: string }[] }) {
+  if (alerts.length === 0) return null;
+
+  return (
+    <ul class="mt-3">
+      {alerts.map((alert, index) => (
+        <li key={index} class="mt-1 text-sm">
+          <span class="tabular-nums">{alert.severity === "urgent" ? "!" : "·"}</span> notified:{" "}
+          {alert.message}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Prev/next only. Numbered pages would need a count nobody reads. */
+export function Pager({ page, pages }: { page: number; pages: number }) {
+  if (pages <= 1) return null;
+
+  return (
+    <nav class="mt-8 flex justify-between text-sm">
+      {page > 0 ? (
+        <a href={`/agent/summaries?page=${page - 1}`}>← newer</a>
+      ) : (
+        <span class="text-muted">← newer</span>
+      )}
+      <span class="text-muted tabular-nums">
+        {page + 1} / {pages}
+      </span>
+      {page + 1 < pages ? (
+        <a href={`/agent/summaries?page=${page + 1}`}>older →</a>
+      ) : (
+        <span class="text-muted">older →</span>
+      )}
+    </nav>
+  );
+}

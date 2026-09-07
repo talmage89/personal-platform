@@ -37,7 +37,7 @@ describe("mountUtilities", () => {
 
   test("rejects slugs that shadow platform routes", () => {
     // A utility called "auth" would capture the login routes.
-    for (const reserved of ["auth", "healthz", "fonts"]) {
+    for (const reserved of ["auth", "livez", "fonts"]) {
       expect(() => mount(stub(reserved))).toThrow(/reserved slug/);
     }
   });

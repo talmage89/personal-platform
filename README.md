@@ -44,13 +44,13 @@ Slugs are validated at boot: no duplicates, and no shadowing a platform route li
 
 **The public surface issues zero database queries.** Neon bills compute-hours and this site is
 on the open internet — bot traffic must not be able to wake the database. Landing page, static
-assets, `/healthz`, and the entire login flow are DB-free by construction, and a test enforces
+assets, `/livez`, and the entire login flow are DB-free by construction, and a test enforces
 it. Before adding anything to the unauthenticated path, read the constraint section of
 `docs/architecture.md`.
 
 ## Status
 
-- [x] **Phase 0** — workspaces, env, server skeleton, `/healthz`, docker, image budget
+- [x] **Phase 0** — workspaces, env, server skeleton, `/livez`, docker, image budget
 - [x] **Phase 1** — landing page, GitHub OAuth, session, gate, rate limit, perimeter test
 - [x] **Phase 2** — shared UI, utility contract, directory
 - [x] **Phase 3** — `@platform/db`, lazy client, Neon, deploy, CI

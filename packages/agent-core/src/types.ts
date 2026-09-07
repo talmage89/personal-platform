@@ -53,6 +53,21 @@ export type Flag = {
   detail: string;
 };
 
+/** One thing the summariser went and looked at, and whether it worked. */
+export type ToolCallRecord = {
+  name: string;
+  args: string;
+  ok: boolean;
+};
+
+/** A push notification that was actually delivered. Timestamps are ISO strings
+ * rather than Dates because this lands in a JSON column and comes back as text. */
+export type AlertRecord = {
+  severity: string;
+  message: string;
+  sentAt: string;
+};
+
 export type ModelUsage = {
   model: string;
   calls: number;
@@ -76,6 +91,16 @@ export interface WindowStats {
 /** A finished summary: the arithmetic, plus prose describing it. */
 export interface Summary extends WindowStats {
   narrative: string;
+  /**
+   * What the model read beyond the sample it was handed. Recorded because a
+   * narrative that investigated and a narrative that guessed read identically,
+   * and only one of them is evidence.
+   */
+  investigation: ToolCallRecord[];
+  /** Notifications sent while writing this summary. */
+  alerts: AlertRecord[];
+  /** Cost of writing the summary. Distinct from `costUsd`, the agent's spend. */
+  narrationCostUsd: number;
 }
 
 /** Trailing context used to decide whether a window is unusual. */

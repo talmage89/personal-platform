@@ -1,16 +1,15 @@
-import { agentConfig, NotConfiguredError, summarizeWindow } from "@platform/agent-core";
+import { agentConfig, NotConfiguredError, notificationsEnabled } from "@platform/agent-core";
 import type { AuthEnv } from "@platform/auth";
 import { Hono } from "hono";
 import { AgentPage, NotConfigured, Stat, SummaryCard, sessionOf } from "../components.tsx";
-import { formatCost, formatCount, formatDuration } from "../format.ts";
+import { formatCost, formatCount, formatDuration, relativeAge } from "../format.ts";
+import { catchUp } from "../jobs.ts";
 import {
-  baselineHistory,
-  knownModels,
+  channelState,
   lastScheduledEnd,
   lastViewedAt,
   markViewed,
   recentSummaries,
-  saveSummary,
 } from "../repository.ts";
 
 /**
@@ -32,15 +31,26 @@ import {
  */
 const MAX_CATCH_UP_HOURS = 24;
 
+/**
+ * How many windows to render in full here. The rest live on the list page —
+ * this is the "what is happening" view, not the archive.
+ */
+const RECENT_ON_OVERVIEW = 8;
+
 export function createOverviewRoutes() {
   const routes = new Hono<AuthEnv>();
 
   routes.get("/", async (c) => {
-    if (!agentConfig()) return c.html(<NotConfigured />);
+    const config = agentConfig();
+    if (!config) return c.html(<NotConfigured />);
 
     const session = sessionOf(c);
     const now = new Date();
-    const [summaries, viewed] = await Promise.all([recentSummaries(), lastViewedAt(session.sub)]);
+    const [summaries, viewed, channel] = await Promise.all([
+      recentSummaries(RECENT_ON_OVERVIEW),
+      lastViewedAt(session.sub),
+      channelState(),
+    ]);
 
     const newest = summaries[0];
     const unread = viewed ? summaries.filter((s) => s.createdAt > viewed).length : summaries.length;
@@ -96,6 +106,16 @@ export function createOverviewRoutes() {
           <p class="mt-4 text-muted text-sm">caught up</p>
         ) : null}
 
+        {channel.lastError ? (
+          <p class="mt-4 text-sm">
+            ! the notification channel last failed with: {channel.lastError}
+          </p>
+        ) : notificationsEnabled(config) && channel.lastSendAt ? (
+          <p class="mt-4 text-muted text-sm">
+            notifications working · last reached {relativeAge(channel.lastSendAt, now)}
+          </p>
+        ) : null}
+
         {summaries.length === 0 ? (
           <>
             <hr class="my-8" />
@@ -107,6 +127,12 @@ export function createOverviewRoutes() {
         ) : (
           summaries.map((summary) => <SummaryCard key={summary.id} summary={summary} now={now} />)
         )}
+
+        <nav class="mt-10 border-current/10 border-t pt-4 text-sm">
+          <a href="/agent/summaries">all summaries</a>
+          <span class="text-muted"> · </span>
+          <a href="/agent/prompts">edit prompts</a>
+        </nav>
       </AgentPage>,
     );
   });
@@ -134,14 +160,7 @@ export function createOverviewRoutes() {
     }
 
     try {
-      const [history, models] = await Promise.all([baselineHistory(), knownModels()]);
-      const summary = await summarizeWindow({
-        window: { start, end: now },
-        history,
-        knownModels: models,
-      });
-
-      await saveSummary(summary, "manual");
+      await catchUp(start, now);
       await markViewed(session.sub, now);
       return c.redirect("/agent?caught", 303);
     } catch (error) {

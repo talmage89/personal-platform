@@ -33,11 +33,11 @@ const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 /**
  * Slugs that would shadow the platform itself. A utility called "auth" would
  * capture the login routes and lock you out of your own site; one called
- * "healthz" would break liveness checks. Cheap to guard, miserable to debug.
+ * "livez" would break liveness checks. Cheap to guard, miserable to debug.
  */
 const RESERVED_SLUGS = new Set([
   "auth",
-  "healthz",
+  "livez",
   "fonts",
   "styles.css",
   "robots.txt",

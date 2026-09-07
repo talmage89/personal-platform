@@ -18,14 +18,14 @@ const signedIn = async () => ({
 });
 
 describe("server", () => {
-  test("/healthz responds without a database", async () => {
-    const res = await app.request("/healthz");
+  test("/livez responds without a database", async () => {
+    const res = await app.request("/livez");
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("ok");
   });
 
-  test("/healthz is never cached", async () => {
-    const res = await app.request("/healthz");
+  test("/livez is never cached", async () => {
+    const res = await app.request("/livez");
     expect(res.headers.get("cache-control")).toBe("no-store");
   });
 

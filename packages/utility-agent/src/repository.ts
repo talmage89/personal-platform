@@ -1,4 +1,14 @@
-import type { Flag, HistoryEntry, ModelUsage, Summary } from "@platform/agent-core";
+import type {
+  AlertRecord,
+  Flag,
+  HistoryEntry,
+  ModelUsage,
+  PriorSummary,
+  ProbeState,
+  Summary,
+  ToolCallRecord,
+} from "@platform/agent-core";
+import { DEFAULT_RECAP_INSTRUCTIONS, DEFAULT_SYSTEM } from "@platform/agent-core";
 import { type AgentSummary, type AgentSummaryKind, db, resolveUser } from "@platform/db";
 
 /**
@@ -27,6 +37,9 @@ export interface StoredSummary {
   models: ModelUsage[];
   flags: Flag[];
   narrative: string;
+  investigation: ToolCallRecord[];
+  alerts: AlertRecord[];
+  narrationCostUsd: number;
   createdAt: Date;
 }
 
@@ -51,6 +64,9 @@ function hydrate(row: AgentSummary): StoredSummary {
     models: asArray<ModelUsage>(row.models),
     flags: asArray<Flag>(row.flags),
     narrative: row.narrative,
+    investigation: asArray<ToolCallRecord>(row.investigation),
+    alerts: asArray<AlertRecord>(row.alerts),
+    narrationCostUsd: fromMicro(row.narrationMicroUsd),
     createdAt: row.createdAt,
   };
 }
@@ -141,6 +157,9 @@ export async function saveSummary(
     models: summary.models,
     flags: summary.flags,
     narrative: summary.narrative,
+    investigation: summary.investigation,
+    alerts: summary.alerts,
+    narrationMicroUsd: toMicro(summary.narrationCostUsd),
   };
 
   const row = await db().agentSummary.upsert({
@@ -179,4 +198,164 @@ export async function markViewed(githubId: string, at: Date): Promise<void> {
     create: { userId: user.id, lastViewedAt: at },
     update: { lastViewedAt: at },
   });
+}
+
+/** One page of the history, newest first. Drives the summaries list. */
+export async function summariesPage(
+  offset: number,
+  limit: number,
+): Promise<{ rows: StoredSummary[]; total: number }> {
+  const [rows, total] = await Promise.all([
+    db().agentSummary.findMany({ orderBy: { periodEnd: "desc" }, skip: offset, take: limit }),
+    db().agentSummary.count(),
+  ]);
+  return { rows: rows.map(hydrate), total };
+}
+
+export async function summaryById(id: string): Promise<StoredSummary | null> {
+  const row = await db().agentSummary.findUnique({ where: { id } });
+  return row ? hydrate(row) : null;
+}
+
+/**
+ * The scheduled summaries covering a span, oldest first — the context a
+ * catch-up reads.
+ *
+ * Scheduled only: manual windows overlap each other and the scheduled ones, and
+ * feeding a catch-up the previous catch-up would be exactly the summary-of-a-
+ * summary the roll-up is built to avoid.
+ */
+export async function priorsBetween(start: Date, end: Date): Promise<PriorSummary[]> {
+  const rows = await db().agentSummary.findMany({
+    where: { kind: "scheduled", periodStart: { gte: start }, periodEnd: { lte: end } },
+    orderBy: { periodStart: "asc" },
+    select: {
+      periodStart: true,
+      periodEnd: true,
+      narrative: true,
+      flags: true,
+      callCount: true,
+      costMicroUsd: true,
+    },
+  });
+
+  return rows.map((row) => ({
+    periodStart: row.periodStart,
+    periodEnd: row.periodEnd,
+    narrative: row.narrative,
+    flags: asArray<Flag>(row.flags),
+    callCount: row.callCount,
+    costUsd: fromMicro(row.costMicroUsd),
+  }));
+}
+
+/** The single channel row, created on first read so callers never see null. */
+const CHANNEL_ID = "default";
+
+export interface ChannelRow extends ProbeState {
+  lastError: string | null;
+}
+
+export async function channelState(): Promise<ChannelRow> {
+  const row = await db().agentChannel.upsert({
+    where: { id: CHANNEL_ID },
+    create: { id: CHANNEL_ID },
+    update: {},
+  });
+  return {
+    lastSendAt: row.lastSendAt,
+    intervalMinutes: row.intervalMinutes,
+    lastError: row.lastError,
+  };
+}
+
+/**
+ * Records that something reached the channel.
+ *
+ * `intervalMinutes` is only advanced by a probe; a real alert proves the
+ * channel just as well but should not push the next check a week out.
+ */
+export async function recordSend(at: Date, intervalMinutes?: number): Promise<void> {
+  await db().agentChannel.upsert({
+    where: { id: CHANNEL_ID },
+    create: { id: CHANNEL_ID, lastSendAt: at, ...(intervalMinutes ? { intervalMinutes } : {}) },
+    update: { lastSendAt: at, lastError: null, ...(intervalMinutes ? { intervalMinutes } : {}) },
+  });
+}
+
+export async function recordSendFailure(message: string): Promise<void> {
+  await db().agentChannel.upsert({
+    where: { id: CHANNEL_ID },
+    create: { id: CHANNEL_ID, lastError: message.slice(0, 500) },
+    update: { lastError: message.slice(0, 500) },
+  });
+}
+
+export type PromptKind = "hourly" | "recap";
+
+export interface EditablePrompt {
+  kind: PromptKind;
+  body: string;
+  /** True when no row exists and the compiled-in text is in use. */
+  isDefault: boolean;
+  updatedAt: Date | null;
+}
+
+/** Ceiling on an edited prompt. Generous; the point is to stop a paste accident. */
+export const MAX_PROMPT_CHARS = 20_000;
+
+const DEFAULTS: Record<PromptKind, string> = {
+  hourly: DEFAULT_SYSTEM,
+  recap: DEFAULT_RECAP_INSTRUCTIONS,
+};
+
+/** The override for one prompt, or null to use the default. */
+export async function promptOverride(kind: PromptKind): Promise<string | null> {
+  const row = await db().agentPrompt.findUnique({ where: { kind }, select: { body: true } });
+  return row?.body ?? null;
+}
+
+/** Both prompts, resolved against their defaults. Drives the editor. */
+export async function editablePrompts(): Promise<EditablePrompt[]> {
+  const rows = await db().agentPrompt.findMany();
+  const byKind = new Map(rows.map((row) => [row.kind, row]));
+
+  return (["hourly", "recap"] as const).map((kind) => {
+    const row = byKind.get(kind);
+    return {
+      kind,
+      body: row?.body ?? DEFAULTS[kind],
+      isDefault: !row,
+      updatedAt: row?.updatedAt ?? null,
+    };
+  });
+}
+
+export const defaultPrompt = (kind: PromptKind): string => DEFAULTS[kind];
+
+/**
+ * Stores an edited prompt.
+ *
+ * Text identical to the default deletes the row instead of storing a copy, so
+ * "reset" and "edited it back by hand" end in the same state and the page never
+ * claims a prompt is customised when it is not.
+ */
+export async function savePrompt(kind: PromptKind, body: string): Promise<void> {
+  const trimmed = body.trim().slice(0, MAX_PROMPT_CHARS);
+
+  if (trimmed === "" || trimmed === DEFAULTS[kind].trim()) {
+    await resetPrompt(kind);
+    return;
+  }
+
+  await db().agentPrompt.upsert({
+    where: { kind },
+    create: { kind, body: trimmed },
+    update: { body: trimmed },
+  });
+}
+
+/** Drops the override, returning the prompt to the text compiled into the build. */
+export async function resetPrompt(kind: PromptKind): Promise<void> {
+  await db().agentPrompt.deleteMany({ where: { kind } });
 }

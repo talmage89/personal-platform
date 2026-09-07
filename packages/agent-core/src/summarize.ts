@@ -1,8 +1,13 @@
 import { fetchCalls } from "./bigquery.ts";
 import { type AgentConfig, agentConfig } from "./config.ts";
-import { narrate } from "./narrate.ts";
+import { type NarrateOptions, narrate } from "./narrate.ts";
+import type { Alert } from "./notify.ts";
 import { analyse, baselineFrom } from "./stats.ts";
-import type { Baseline, Summary, Window } from "./types.ts";
+import type { AlertRecord, Baseline, Summary, Window } from "./types.ts";
+
+/** Dates do not survive a JSON column; ISO strings do. */
+const toRecord = (alerts: Alert[]): AlertRecord[] =>
+  alerts.map((a) => ({ severity: a.severity, message: a.message, sentAt: a.sentAt.toISOString() }));
 
 /**
  * One window in, one summary out. Both the hourly job and the on-demand button
@@ -24,6 +29,8 @@ export interface SummarizeOptions {
   /** Models seen before now. Used only to notice a first appearance. */
   knownModels: ReadonlySet<string>;
   config?: AgentConfig;
+  /** Passed through to the narrator: detail budget, model, deadline, tools. */
+  narration?: NarrateOptions;
 }
 
 export class NotConfiguredError extends Error {
@@ -38,6 +45,7 @@ export async function summarizeWindow({
   history,
   knownModels,
   config = agentConfig() ?? undefined,
+  narration,
 }: SummarizeOptions): Promise<Summary> {
   if (!config) throw new NotConfiguredError();
 
@@ -48,12 +56,25 @@ export async function summarizeWindow({
   // A window with nothing in it still gets a row. Gaps in the history are
   // indistinguishable from "the job did not run", and one of those is a
   // finding while the other is a bug.
-  const narrative =
-    calls.length === 0 && stats.flags.length === 0
-      ? "No model calls in this window."
-      : await narrate(config, stats, calls);
+  if (calls.length === 0 && stats.flags.length === 0) {
+    return {
+      ...stats,
+      narrative: "No model calls in this window.",
+      investigation: [],
+      alerts: [],
+      narrationCostUsd: 0,
+    };
+  }
 
-  return { ...stats, narrative };
+  const result = await narrate(config, stats, calls, narration);
+
+  return {
+    ...stats,
+    narrative: result.text,
+    investigation: result.investigation,
+    alerts: toRecord(result.alerts),
+    narrationCostUsd: result.costUsd,
+  };
 }
 
 /**

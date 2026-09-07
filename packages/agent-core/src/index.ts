@@ -1,6 +1,49 @@
-export { fetchCalls, resetTokenCache } from "./bigquery.ts";
-export { type AgentConfig, agentConfig, resetAgentConfig } from "./config.ts";
+export {
+  aggregateSpan,
+  fetchCalls,
+  fetchTrace,
+  resetTokenCache,
+  searchDialog,
+} from "./bigquery.ts";
+export {
+  type AgentConfig,
+  agentConfig,
+  agentConfigProblems,
+  BUDGETS,
+  catchupBudget,
+  catchupModel,
+  DETAIL_LEVELS,
+  type DetailBudget,
+  type DetailLevel,
+  resetAgentConfig,
+  summaryBudget,
+} from "./config.ts";
+export {
+  DEFAULT_SYSTEM,
+  type NarrateOptions,
+  type NarrationResult,
+  narrate,
+} from "./narrate.ts";
+export {
+  type Alert,
+  type AlertSeverity,
+  advanceInterval,
+  notificationsEnabled,
+  PROBE_MAX_MINUTES,
+  PROBE_MIN_MINUTES,
+  type ProbeState,
+  probeDue,
+  probeMessage,
+  sendPush,
+} from "./notify.ts";
+export { OpenRouterError, type ToolSpec } from "./openrouter.ts";
 export { redact, redactAll } from "./redact.ts";
+export {
+  DEFAULT_RECAP_INSTRUCTIONS,
+  type PriorSummary,
+  type RollupOptions,
+  rollup,
+} from "./rollup.ts";
 export { analyse, baselineFrom, median } from "./stats.ts";
 export {
   type HistoryEntry,
@@ -10,12 +53,14 @@ export {
   summarizeWindow,
 } from "./summarize.ts";
 export type {
+  AlertRecord,
   Baseline,
   Call,
   Flag,
   FlagSeverity,
   ModelUsage,
   Summary,
+  ToolCallRecord,
   Window,
   WindowStats,
 } from "./types.ts";

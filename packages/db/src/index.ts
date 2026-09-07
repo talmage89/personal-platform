@@ -6,8 +6,14 @@
 
 // Enums are generated as a const object plus a matching type, so the enum name
 // has to be re-exported as both to be usable as a value and as a type.
-export { type AgentSummaryKind, WeightUnit } from "../prisma/generated/enums.ts";
+export {
+  type AgentPromptKind,
+  type AgentSummaryKind,
+  WeightUnit,
+} from "../prisma/generated/enums.ts";
 export type {
+  AgentChannelModel as AgentChannel,
+  AgentPromptModel as AgentPrompt,
   AgentSummaryModel as AgentSummary,
   AgentViewModel as AgentView,
   UserModel as User,
