@@ -199,7 +199,7 @@ const COST = "IFNULL(SAFE_CAST(JSON_VALUE(o, '$.totalCost') AS FLOAT64), 0.0)";
 const SQL = (table: string) => `
 SELECT
   JSON_VALUE(trace, '$.id')                            AS traceId,
-  ${AT}                                                AS `at`,
+  ${AT}                                                AS \`at\`,
   IFNULL(JSON_VALUE(o, '$.model'), '(unknown)')        AS model,
   IFNULL(JSON_VALUE(o, '$.providerSlug'), '(unknown)') AS provider,
   ${int64("promptTokens")}                             AS promptTokens,
@@ -215,7 +215,7 @@ WHERE dt BETWEEN @dtStart AND @dtEnd
   AND ${AT} >= @start
   AND ${AT} <  @end
   ${EXCLUDE_SELF}
-ORDER BY `at`
+ORDER BY \`at\`
 LIMIT @rowLimit
 `;
 
@@ -223,7 +223,7 @@ LIMIT @rowLimit
 const SEARCH_SQL = (table: string) => `
 SELECT
   JSON_VALUE(trace, '$.id')                     AS traceId,
-  ${AT}                                         AS `at`,
+  ${AT}                                         AS \`at\`,
   IFNULL(JSON_VALUE(o, '$.model'), '(unknown)') AS model,
   ${int64("promptTokens")}                      AS promptTokens,
   SUBSTR(TO_JSON_STRING(JSON_QUERY(trace, '$.input')), 1, @excerpt) AS inputExcerpt
@@ -233,7 +233,7 @@ WHERE dt BETWEEN @dtStart AND @dtEnd
   AND ${AT} <  @end
   AND CONTAINS_SUBSTR(TO_JSON_STRING(JSON_QUERY(trace, '$.input')), @needle)
   ${EXCLUDE_SELF}
-ORDER BY `at`
+ORDER BY \`at\`
 LIMIT @rowLimit
 `;
 
