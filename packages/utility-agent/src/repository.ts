@@ -257,15 +257,16 @@ export interface ChannelRow extends ProbeState {
 }
 
 export async function channelState(): Promise<ChannelRow> {
-  const row = await db().agentChannel.upsert({
-    where: { id: CHANNEL_ID },
-    create: { id: CHANNEL_ID },
-    update: {},
-  });
+  // A plain read, never an upsert. Prisma implements upsert as a transaction,
+  // and the Neon HTTP driver has none — which turned the overview page into a
+  // 500. Absence is a meaningful state here anyway: no row means nothing has
+  // ever been sent, which is exactly what the defaults below say.
+  const row = await db().agentChannel.findUnique({ where: { id: CHANNEL_ID } });
+
   return {
-    lastSendAt: row.lastSendAt,
-    intervalMinutes: row.intervalMinutes,
-    lastError: row.lastError,
+    lastSendAt: row?.lastSendAt ?? null,
+    intervalMinutes: row?.intervalMinutes ?? PROBE_MIN_MINUTES,
+    lastError: row?.lastError ?? null,
   };
 }
 
