@@ -1,4 +1,4 @@
-import { type AgentConfig, tableRef } from "./config.ts";
+import { type AgentConfig, selfModels, tableRef } from "./config.ts";
 import type { Call, Window } from "./types.ts";
 
 /**
@@ -57,8 +57,8 @@ export function resetTokenCache(): void {
 
 interface QueryParameter {
   name: string;
-  parameterType: { type: string };
-  parameterValue: { value: string };
+  parameterType: { type: string; arrayType?: { type: string } };
+  parameterValue: { value?: string; arrayValues?: { value: string }[] };
 }
 
 interface QueryResponse {
@@ -160,16 +160,32 @@ async function runQuery(
 }
 
 /**
- * Excludes the summariser's own traffic.
+ * Which observations are actually model calls, and whose.
  *
- * The summariser calls the same broker the agent does, so its requests are
- * broadcast into this very table. Without this clause each run would report on
- * the previous run's report, and the arithmetic would count the cost of
- * watching as the cost of working. Requests carry the marker in their `user`
- * field; the match is against the whole serialised trace so it holds wherever
- * the broker chooses to put it.
+ * Two filters that were both missing, and together they made every number on
+ * the page wrong by a factor of three and pointed the summariser at itself.
+ *
+ * `type = 'GENERATION'` — a trace carries SPAN observations alongside the
+ * generation, two of them per call in practice. Counting all of them inflated
+ * the call count 3x, invented an `(unknown)` model for the spans, and made the
+ * repetition detector fire on every window: spans share their trace's input, so
+ * "consecutive identical prompts" was true by construction.
+ *
+ * The model filter is the self-exclusion. It was supposed to work off a marker
+ * sent in the request's `user` field, but the broker does not persist that into
+ * the trace — verified against real data, where the marker appears in exactly
+ * zero rows. So the summariser was reading its own traffic, flagging itself for
+ * a cost spike, and doing it again an hour later on a larger window.
+ *
+ * Excluding by model is imperfect: point the agent at the same model as the
+ * summariser and its calls vanish from its own report. The durable fix is a
+ * separate broker key for the summariser with broadcasting switched off, which
+ * removes the traffic at source instead of filtering it afterwards. The marker
+ * check stays as well, in case the broker starts persisting it.
  */
-const EXCLUDE_SELF = "AND NOT CONTAINS_SUBSTR(TO_JSON_STRING(trace), @selfMarker)";
+const ONLY_REAL_CALLS = `AND JSON_VALUE(o, '$.type') = 'GENERATION'
+  AND NOT CONTAINS_SUBSTR(TO_JSON_STRING(trace), @selfMarker)
+  AND IFNULL(JSON_VALUE(o, '$.model'), '') NOT IN UNNEST(@selfModels)`;
 
 /**
  * The table stores `trace` as a single JSON column, so every field is read
@@ -214,7 +230,7 @@ FROM ${table}, UNNEST(JSON_QUERY_ARRAY(trace, '$.observations')) AS o
 WHERE dt BETWEEN @dtStart AND @dtEnd
   AND ${AT} >= @start
   AND ${AT} <  @end
-  ${EXCLUDE_SELF}
+  ${ONLY_REAL_CALLS}
 ORDER BY \`at\`
 LIMIT @rowLimit
 `;
@@ -232,7 +248,7 @@ WHERE dt BETWEEN @dtStart AND @dtEnd
   AND ${AT} >= @start
   AND ${AT} <  @end
   AND CONTAINS_SUBSTR(TO_JSON_STRING(JSON_QUERY(trace, '$.input')), @needle)
-  ${EXCLUDE_SELF}
+  ${ONLY_REAL_CALLS}
 ORDER BY \`at\`
 LIMIT @rowLimit
 `;
@@ -273,7 +289,7 @@ FROM ${table}, UNNEST(JSON_QUERY_ARRAY(trace, '$.observations')) AS o
 WHERE dt BETWEEN @dtStart AND @dtEnd
   AND ${AT} >= @start
   AND ${AT} <  @end
-  ${EXCLUDE_SELF}
+  ${ONLY_REAL_CALLS}
 GROUP BY model
 ORDER BY calls DESC
 `;
@@ -284,6 +300,12 @@ const str = (name: string, value: string): QueryParameter => ({
   name,
   parameterType: { type: "STRING" },
   parameterValue: { value },
+});
+
+const strArray = (name: string, values: string[]): QueryParameter => ({
+  name,
+  parameterType: { type: "ARRAY", arrayType: { type: "STRING" } },
+  parameterValue: { arrayValues: values.map((value) => ({ value })) },
 });
 
 const int = (name: string, value: number): QueryParameter => ({
@@ -330,6 +352,7 @@ export async function fetchCalls(
     int("excerpt", EXCERPT_CHARS),
     int("rowLimit", ROW_LIMIT),
     str("selfMarker", config.AGENT_SELF_MARKER),
+    strArray("selfModels", selfModels(config)),
   ];
 
   const { rows, truncated, bytesProcessed } = await runQuery(
@@ -376,6 +399,7 @@ export async function searchDialog(
     int("excerpt", SEARCH_EXCERPT_CHARS),
     int("rowLimit", capped),
     str("selfMarker", config.AGENT_SELF_MARKER),
+    strArray("selfModels", selfModels(config)),
   ];
 
   const { rows, truncated } = await runQuery(config, SEARCH_SQL(tableRef(config)), params, capped);
@@ -448,7 +472,11 @@ export interface SpanAggregate {
 
 /** Exact per-model totals for a span, at any volume. */
 export async function aggregateSpan(config: AgentConfig, window: Window): Promise<SpanAggregate> {
-  const params = [...windowParams(window), str("selfMarker", config.AGENT_SELF_MARKER)];
+  const params = [
+    ...windowParams(window),
+    str("selfMarker", config.AGENT_SELF_MARKER),
+    strArray("selfModels", selfModels(config)),
+  ];
 
   const { rows } = await runQuery(
     config,

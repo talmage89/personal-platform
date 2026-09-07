@@ -133,6 +133,7 @@ export async function chat(config: AgentConfig, options: ChatOptions): Promise<C
    * from the loop below goes through a turn that can return text.
    */
   let forceFinish = false;
+  let finalAsked = false;
 
   // Each round is at most one tool batch, so this only bites if the model
   // asks for a single tool at a time. It exists so the loop cannot spin.
@@ -145,6 +146,19 @@ export async function chat(config: AgentConfig, options: ChatOptions): Promise<C
     }
 
     const offerTools = !forceFinish && schema.length > 0 && performed.length < maxToolCalls;
+
+    // Withholding the tools is not enough on its own. Asked again with nothing
+    // to call, the model tended to narrate what it *would* look at next — which
+    // then got stored as the summary — or to return nothing at all. It has to be
+    // told, in words, that this turn is the write-up.
+    if (forceFinish && !finalAsked) {
+      finalAsked = true;
+      messages.push({
+        role: "user",
+        content:
+          "You have no lookups left. Write the briefing now, using only what you already have. Do not describe what you would examine next, do not ask for anything further, and do not mention the tools. If the evidence left a flag unexplained, say so plainly and say what you did establish.",
+      });
+    }
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);

@@ -166,3 +166,15 @@ export const catchupBudget = (config: AgentConfig): DetailBudget =>
 
 export const catchupModel = (config: AgentConfig): string =>
   config.AGENT_CATCHUP_MODEL ?? config.AGENT_SUMMARY_MODEL;
+
+/**
+ * Models the summariser itself uses.
+ *
+ * Excluded from every read, because the summariser's own traffic goes through
+ * the same broker as the agent's and is broadcast into the table it reads.
+ * See ONLY_REAL_CALLS in bigquery.ts for why this is done by model rather than
+ * by the marker it was originally meant to use.
+ */
+export const selfModels = (config: AgentConfig): string[] => [
+  ...new Set([config.AGENT_SUMMARY_MODEL, config.AGENT_CATCHUP_MODEL].filter(Boolean) as string[]),
+];
