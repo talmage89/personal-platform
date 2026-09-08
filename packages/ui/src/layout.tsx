@@ -6,6 +6,8 @@ interface LayoutProps {
   title: string;
   /** Omitted on the directory itself, which is already home. */
   back?: boolean;
+  /** Reload after this many seconds. See Root — it is how a page polls here. */
+  refreshSeconds?: number;
 }
 
 /**
@@ -17,9 +19,14 @@ interface LayoutProps {
  * element defaults in styles.css carry the rest, which is why utility pages need
  * almost no classes of their own.
  */
-export function Layout({ title, back = true, children }: PropsWithChildren<LayoutProps>) {
+export function Layout({
+  title,
+  back = true,
+  refreshSeconds,
+  children,
+}: PropsWithChildren<LayoutProps>) {
   return (
-    <Root title={title}>
+    <Root title={title} refreshSeconds={refreshSeconds}>
       <header>
         <h1>
           {back ? (

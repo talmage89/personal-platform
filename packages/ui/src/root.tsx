@@ -3,9 +3,22 @@ import type { PropsWithChildren } from "hono/jsx";
 
 interface RootProps {
   title?: string;
+  /**
+   * Seconds after which the browser should reload this page, if it should.
+   *
+   * The one way to poll on a platform that serves `script-src 'none'`. A page
+   * waiting on work that runs somewhere else — an answer being written by a job
+   * — otherwise has no way to notice it has arrived, and "reload this yourself"
+   * is an instruction people follow twice and then stop following.
+   *
+   * Only ever set while something is genuinely outstanding: a page that keeps
+   * refreshing after the work has landed is a page that fights the reader for
+   * the scroll position, and on a gated route it also keeps the database awake.
+   */
+  refreshSeconds?: number;
 }
 
-export function Root({ title, children }: PropsWithChildren<RootProps>) {
+export function Root({ title, refreshSeconds, children }: PropsWithChildren<RootProps>) {
   return (
     <>
       {/*
@@ -19,6 +32,7 @@ export function Root({ title, children }: PropsWithChildren<RootProps>) {
           <meta name="viewport" content="width=device-width, initial-scale=1" />
           <meta name="color-scheme" content="light dark" />
           <title>{title ?? ""}</title>
+          {refreshSeconds ? <meta http-equiv="refresh" content={String(refreshSeconds)} /> : null}
           <link rel="stylesheet" href="/styles.css" />
           {/* An empty svg. A favicon request that 404s is a wasted round trip. */}
           <link

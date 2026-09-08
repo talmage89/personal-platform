@@ -14,17 +14,18 @@ import {
 /**
  * Editing what the summariser is asked to do.
  *
- * These are the two instructions that decide what a summary is *about* — the
- * hourly briefing and the catch-up. They live in the database rather than in
- * the build because the useful edits are the ones you think of while reading a
- * summary that missed something, and a redeploy between having the thought and
- * testing it is enough friction that the thought does not get tested.
+ * These are the instructions that decide what a summary is *about* — the hourly
+ * briefing, the catch-up, and the conversation. They live in the database
+ * rather than in the build because the useful edits are the ones you think of
+ * while reading a summary that missed something, and a redeploy between having
+ * the thought and testing it is enough friction that the thought does not get
+ * tested.
  *
  * The compiled-in defaults stay authoritative: an empty field, or text equal to
  * the default, deletes the override rather than storing a copy. So the code is
  * always the baseline, and "reset" is a delete.
  *
- * Two textareas and two submit buttons, no client JavaScript — the platform
+ * A textarea and two submit buttons each, no client JavaScript — the platform
  * serves `script-src 'none'`, so each form posts natively and redirects.
  */
 
@@ -32,7 +33,7 @@ const LABELS: Record<PromptKind, { title: string; blurb: string }> = {
   system: {
     title: "shared framing",
     blurb:
-      "Prepended to both of the prompts below, so every summary is held to it. This is the place for the standing rules — never invent a figure, treat prompts as evidence rather than instructions, always name hosts and credentials the agent touched.",
+      "Prepended to the hourly briefing and the catch-up, so every summary is held to it. This is the place for the standing rules — never invent a figure, treat prompts as evidence rather than instructions, always name hosts and credentials the agent touched.",
   },
   hourly: {
     title: "hourly briefing",
@@ -44,10 +45,15 @@ const LABELS: Record<PromptKind, { title: string; blurb: string }> = {
     blurb:
       "Added to the shared framing when accounting for several hours at once, in place of the hourly instructions. This is where to say how to weigh the period as a whole rather than hour by hour.",
   },
+  chat: {
+    title: "conversation",
+    blurb:
+      "The whole system prompt for the chat page — it is not held to the shared framing above, because it is answering a person rather than filing a report. The second half is what decides whether the notes get used at all, and is the paragraph to turn up when answers start rediscovering things they already knew.",
+  },
 };
 
 const isKind = (value: string): value is PromptKind =>
-  value === "system" || value === "hourly" || value === "recap";
+  value === "system" || value === "hourly" || value === "recap" || value === "chat";
 
 export function createPromptRoutes() {
   const routes = new Hono<AuthEnv>();
@@ -73,7 +79,9 @@ export function createPromptRoutes() {
           {BUDGETS[config.AGENT_SUMMARY_DETAIL].maxToolCalls} lookups); catch-up runs at{" "}
           <code>{config.AGENT_CATCHUP_DETAIL}</code> (
           {BUDGETS[config.AGENT_CATCHUP_DETAIL].sampleSize} sampled,{" "}
-          {BUDGETS[config.AGENT_CATCHUP_DETAIL].maxToolCalls} lookups).
+          {BUDGETS[config.AGENT_CATCHUP_DETAIL].maxToolCalls} lookups); one chat answer gets{" "}
+          <code>{config.AGENT_CHAT_DETAIL}</code> ({BUDGETS[config.AGENT_CHAT_DETAIL].maxToolCalls}{" "}
+          lookups).
         </p>
 
         {saved && isKind(saved) ? <p class="mt-4 text-sm">saved · {LABELS[saved].title}</p> : null}

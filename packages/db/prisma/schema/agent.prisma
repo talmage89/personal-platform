@@ -102,12 +102,16 @@ model AgentChannel {
   updatedAt DateTime @updatedAt
 }
 
-/// Which prompt. `system` is the shared framing both of the others are held to;
-/// `hourly` writes up one window; `recap` accounts for many.
+/// Which prompt. `system` is the shared framing the two summary prompts are
+/// held to; `hourly` writes up one window; `recap` accounts for many. `chat`
+/// stands apart — it is the whole system prompt for the conversation page,
+/// including how insistently the notes are to be used, and is not held to the
+/// shared framing because it is answering a person rather than filing a report.
 enum AgentPromptKind {
   system
   hourly
   recap
+  chat
 }
 
 /// An edited prompt, overriding the one compiled into the build.
@@ -123,4 +127,110 @@ model AgentPrompt {
   body String
 
   updatedAt DateTime @updatedAt
+}
+
+/// Who said it. Tool results and the model's own lookups are not turns — they
+/// are recorded on the assistant message that produced them, in `investigation`.
+enum AgentChatRole {
+  user
+  assistant
+}
+
+/// One conversation with the summariser about the state of the system.
+///
+/// The hourly summaries answer "what happened in this window". They cannot
+/// answer "has it ever done this before", "what is normal for a Tuesday", or
+/// "why does it keep retrying that one file" — questions that range across the
+/// whole record rather than sitting inside one window. This is that surface: a
+/// thread, the same log-reading tools the summariser has, and the notes below.
+///
+/// Threads rather than one rolling conversation, because the questions are
+/// unrelated to each other. "What was that spike on Tuesday" does not want the
+/// last month of unrelated context in its prompt, and paying to carry it would
+/// make every answer worse as well as dearer.
+model AgentChat {
+  id String @id @default(uuid(7))
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// The opening question, trimmed. Enough to recognise the thread by; not
+  /// worth a model call to title it more elegantly.
+  title String
+
+  /// Set when a job has been asked for a reply and has not delivered one.
+  ///
+  /// An answer takes minutes — it reads the warehouse — so it cannot be written
+  /// inside the request that asked for it; the page renders from this and says
+  /// so. Cleared whether the job succeeds or fails, so a thread cannot be
+  /// wedged in "thinking" by a crash.
+  pendingSince DateTime?
+
+  /// Why the last attempt produced nothing. Shown on the thread, cleared by the
+  /// next successful answer.
+  lastError String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages AgentChatMessage[]
+
+  @@index([userId, updatedAt])
+}
+
+/// One turn. The whole thread is replayed into the prompt, oldest first.
+model AgentChatMessage {
+  id String @id @default(uuid(7))
+
+  chatId String
+  chat   AgentChat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+
+  role AgentChatRole
+  body String
+
+  /// `[{ name, args, ok }]` — what the answer went and read. Recorded for the
+  /// same reason the summaries record it: an answer that checked and an answer
+  /// that guessed read exactly alike, and only one of them is evidence.
+  investigation Json?
+
+  /// What this turn cost to produce, in millionths of a dollar. Zero on a
+  /// question, since asking one is free.
+  costMicroUsd Int @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@index([chatId, createdAt])
+}
+
+/// Something learned once and worth not re-deriving.
+///
+/// The logs only ever get longer, and every answer that has to rediscover what
+/// this agent is *for* — which repositories it works on, what its ordinary day
+/// costs, which of its habits have already been explained and dismissed — pays
+/// for that discovery again. A note is the durable half of a conversation.
+///
+/// Written by the chat through a tool and editable by hand on the memory page,
+/// because the failure mode of a memory nobody can see is a wrong fact repeated
+/// with growing confidence. The `summary` line of every note is in the prompt of
+/// every conversation; the body is read on demand.
+model AgentNote {
+  /// A stable handle the model chooses, e.g. "what-the-agent-works-on". Also
+  /// how it overwrites its own note rather than accumulating near-duplicates.
+  key String @id
+
+  /// One line. This is what is always in context, so it carries the fact
+  /// itself rather than a description of where the fact is.
+  summary String
+
+  body String
+
+  /// Which conversation last wrote it, or null when a person edited it here.
+  /// Not a relation: a note outlives the thread that produced it, and losing
+  /// the note when the thread is deleted would be the wrong end of the trade.
+  sourceChatId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([updatedAt])
 }

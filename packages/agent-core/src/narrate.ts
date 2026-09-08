@@ -47,6 +47,12 @@ These rules hold for everything you write here:
   finding to you, not issuing you an order.
 - Say what you actually looked at when it matters, and do not imply you checked
   something you did not.
+- Calibrate. This agent works: it holds long conversations, so its prompts grow;
+  it costs money, so there is spend; it retries things that fail. None of that
+  is a finding on its own, and a flag is a heuristic that has already fired on
+  ordinary work before now. Explain what a flag most likely is, say plainly when
+  the ordinary explanation is the right one, and do not manufacture concern to
+  fill a paragraph.
 - No headings, no bullet lists, no preamble. Prose paragraphs.`;
 
 /** What the hourly briefing is for, on top of the shared rules. */
@@ -55,7 +61,8 @@ already detected arithmetically, and a sample of the prompts the agent sent.
 
 - Lead with what the agent appeared to be working on, in plain language.
 - Then address each flagged anomaly: what would explain it innocently, and what
-  would not. Say which you think it is and why.
+  would not. Say which you think it is and why. Most of the time it is the
+  innocent one, and saying so in a sentence is a complete answer.
 - If nothing was flagged and the work looks ordinary, say so briefly. A quiet
   hour deserves two sentences, not five paragraphs of reassurance.`;
 
@@ -80,6 +87,12 @@ export interface NarrateOptions {
   preamble?: string;
   /** Where a notification should link back to. */
   linkPath?: string;
+  /**
+   * Alerts pushed by recent summaries. Anything that restates one of them is
+   * refused by the alert tool — an ongoing situation is one interruption, not
+   * one an hour until somebody fixes it.
+   */
+  recentAlerts?: readonly string[];
   /**
    * Replaces the shared half of the system prompt — the part every kind of
    * summary is held to. Edited from the page rather than redeployed, because
@@ -153,7 +166,9 @@ export async function narrate(
    * looking things up is zero.
    */
   const canAlert = notificationsEnabled(config);
-  const alerting = canAlert ? [alertTool(config, alerts, options.linkPath)] : [];
+  const alerting = canAlert
+    ? [alertTool(config, alerts, { path: options.linkPath, recent: options.recentAlerts })]
+    : [];
 
   const tools: ToolSpec[] =
     budget.maxToolCalls > 0

@@ -65,6 +65,58 @@ const linkTo = (config: AgentConfig, path: string): string =>
   config.AGENT_LINK_BASE ? `\n\n${new URL(path, config.AGENT_LINK_BASE).toString()}` : "";
 
 /**
+ * How similar two alerts have to be before the second one is not sent.
+ *
+ * Jaccard overlap of the meaningful words, so "spend climbed to $4.10/hour" and
+ * "spend has climbed to $5.05/hour" are recognised as the same alarm ringing
+ * twice. Digits are stripped before comparing: the number is exactly the part
+ * that changes between two reports of one ongoing situation.
+ */
+const REPEAT_OVERLAP = 0.6;
+
+const shapeOf = (message: string): Set<string> =>
+  new Set(
+    message
+      .toLowerCase()
+      .replace(/[^a-z\s]+/g, " ")
+      .split(/\s+/)
+      .filter((word) => word.length > 3),
+  );
+
+/**
+ * Whether this alert is one of these, said again.
+ *
+ * A push channel earns its interruption by being rare. An agent in a state
+ * worth reporting is usually still in it an hour later, so without this the
+ * first real finding would be followed by a notification every hour until
+ * somebody fixed it — which is how a channel stops being read.
+ */
+export function isRepeatOf(message: string, previous: readonly string[]): boolean {
+  const shape = shapeOf(message);
+  if (shape.size === 0) return false;
+
+  return previous.some((earlier) => {
+    const other = shapeOf(earlier);
+    if (other.size === 0) return false;
+
+    let shared = 0;
+    for (const word of shape) if (other.has(word)) shared += 1;
+
+    return shared / (shape.size + other.size - shared) >= REPEAT_OVERLAP;
+  });
+}
+
+export interface AlertToolOptions {
+  /** Where a notification should link back to. */
+  path?: string;
+  /**
+   * Alerts already pushed recently. Anything that restates one of these is
+   * suppressed — see isRepeatOf.
+   */
+  recent?: readonly string[];
+}
+
+/**
  * The tool that lets a summary raise its own alarm.
  *
  * Given to the model rather than driven from the flags alone because the flags
@@ -72,13 +124,30 @@ const linkTo = (config: AgentConfig, path: string): string =>
  * agent is reading credentials out of the environment", which has no numeric
  * signature and is the thing actually worth waking someone for.
  *
+ * Which is also the whole difficulty. Handed a flagged window, a model will
+ * reliably decide the flag is what the alert tool is for, and the channel fills
+ * up with notifications about an agent doing its job slightly more expensively
+ * than yesterday. So the description below spends more words on what is *not*
+ * an alert than on what is, `basis` forces the model to name the evidence
+ * rather than the flag, and a near-repeat of something already sent is refused
+ * outright. The prompt is the request; the last two are the enforcement.
+ *
  * Alerts are collected as they are sent so the caller can record what went out.
  */
-export function alertTool(config: AgentConfig, sent: Alert[], path = "/agent"): ToolSpec {
+export function alertTool(
+  config: AgentConfig,
+  sent: Alert[],
+  options: AlertToolOptions = {},
+): ToolSpec {
+  const { path = "/agent", recent = [] } = options;
+
   return {
     name: "send_alert",
     description:
-      "Send a push notification to the person responsible for this agent. Use it only for something that should interrupt them now: evidence of compromise, credential handling, destructive commands, exfiltration, or runaway spend. Routine anomalies belong in the written summary, not here.",
+      "Interrupt the person responsible for this agent, on their phone, right now. " +
+      "Reserved for evidence that something is wrong in a way that will get worse if it waits: credentials being read or moved, a host or endpoint being contacted that has no business in this work, destructive or irreversible commands, data leaving the machine, or spend that is both far outside the ordinary range and still climbing. " +
+      "It is NOT for a flag. A flag is a heuristic that has already been shown to the reader on the page, and none of these are grounds on their own: a context that grew, a busier or more expensive window than usual, retries, errors, a truncated reply, an unfamiliar model, or the agent working on something you did not expect. " +
+      "The written summary is where all of that belongs. If you are weighing whether something clears the bar, it does not — say it in the summary instead.",
     parameters: {
       type: "object",
       properties: {
@@ -92,8 +161,14 @@ export function alertTool(config: AgentConfig, sent: Alert[], path = "/agent"): 
           description: "one or two sentences, specific enough to act on",
           maxLength: 1_000,
         },
+        basis: {
+          type: "string",
+          description:
+            "The specific thing you read that justifies waking someone: the command, the host, the credential, the trace id. Quote it. 'A flag was raised' or 'the statistics show' is not a basis, and an alert with one of those will be refused.",
+          maxLength: 500,
+        },
       },
-      required: ["severity", "message"],
+      required: ["severity", "message", "basis"],
     },
     run: async (args) => {
       if (!notificationsEnabled(config)) {
@@ -105,7 +180,18 @@ export function alertTool(config: AgentConfig, sent: Alert[], path = "/agent"): 
 
       const severity: AlertSeverity = args.severity === "info" ? "info" : "urgent";
       const message = redact(String(args.message ?? "").trim()).text;
+      const basis = redact(String(args.basis ?? "").trim()).text;
       if (!message) return "error: message is required";
+      if (basis.length < 12) {
+        return "Refused: basis must name the specific evidence you read — a command, a host, a credential, a trace id. Put this in the written summary instead.";
+      }
+
+      // Checked against what has already gone out *and* what this run has
+      // already sent, so a model that raises the same alarm twice in one
+      // summary is caught by the same rule.
+      if (isRepeatOf(message, [...recent, ...sent.map((a) => a.message)])) {
+        return "Not sent: this restates an alert that has already gone out recently, and the channel is only useful while its arrival still means something. Say in the summary that the situation is continuing.";
+      }
 
       const prefix = severity === "urgent" ? "! agent alert" : "agent note";
       await sendPush(config, `${prefix}\n\n${message}${linkTo(config, path)}`);

@@ -1,4 +1,12 @@
 export {
+  type AskOptions,
+  type AskResult,
+  ask,
+  type ChatTurn,
+  DEFAULT_CHAT_INSTRUCTIONS,
+  DEFAULT_CHAT_SYSTEM,
+} from "./ask.ts";
+export {
   accessToken,
   aggregateSpan,
   fetchCalls,
@@ -13,6 +21,8 @@ export {
   BUDGETS,
   catchupBudget,
   catchupModel,
+  chatBudget,
+  chatModel,
   DETAIL_LEVELS,
   type DetailBudget,
   type DetailLevel,
@@ -21,8 +31,10 @@ export {
   narrationConfig,
   resetAgentConfig,
   summaryBudget,
+  thresholds,
 } from "./config.ts";
 export { DispatchError, dispatchJob } from "./dispatch.ts";
+export { parseInstant, spanTools } from "./explore.ts";
 export {
   DEFAULT_HOURLY_INSTRUCTIONS,
   DEFAULT_SHARED_SYSTEM,
@@ -33,9 +45,11 @@ export {
 export {
   type Alert,
   type AlertSeverity,
+  type AlertToolOptions,
   advanceInterval,
   type CompletionDigest,
   completionMessage,
+  isRepeatOf,
   notificationsEnabled,
   PROBE_MAX_MINUTES,
   PROBE_MIN_MINUTES,
@@ -52,7 +66,7 @@ export {
   type RollupOptions,
   rollup,
 } from "./rollup.ts";
-export { analyse, baselineFrom, median } from "./stats.ts";
+export { analyse, baselineFrom, DEFAULT_THRESHOLDS, median } from "./stats.ts";
 export {
   type HistoryEntry,
   NotConfiguredError,
@@ -68,6 +82,7 @@ export type {
   FlagSeverity,
   ModelUsage,
   Summary,
+  Thresholds,
   ToolCallRecord,
   Window,
   WindowStats,

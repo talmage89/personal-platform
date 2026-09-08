@@ -169,7 +169,11 @@ export function createOverviewRoutes() {
         )}
 
         <nav class="mt-10 border-current/10 border-t pt-4 text-sm">
+          <a href="/agent/chat">ask a question</a>
+          <span class="text-muted"> · </span>
           <a href="/agent/summaries">all summaries</a>
+          <span class="text-muted"> · </span>
+          <a href="/agent/memory">memory</a>
           <span class="text-muted"> · </span>
           <a href="/agent/prompts">edit prompts</a>
         </nav>

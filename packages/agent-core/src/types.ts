@@ -113,4 +113,31 @@ export interface Baseline {
   promptTokens: number;
   /** How many hours the medians were taken over. Zero means "no history yet". */
   hours: number;
+  /**
+   * Share of those hours that had any traffic at all, 0–1.
+   *
+   * Separate from the medians because it answers a different question. The
+   * medians say how much the agent does when it is working; this says whether
+   * it is ever *not* working — and an empty hour is only evidence of a dead
+   * agent for one that is essentially never idle.
+   */
+  activeShare: number;
+}
+
+/**
+ * Absolute floors, below which a multiple of the trailing median is not a
+ * finding.
+ *
+ * These are properties of the deployment rather than of the code: what counts
+ * as a lot of money depends entirely on what the agent being watched is for,
+ * so they arrive from the environment. Every relative test in stats.ts is
+ * paired with one of these, because "three times the usual" over a base of
+ * pennies is arithmetic, not news — and a page that reports it as news is a
+ * page nobody reads by the second week.
+ */
+export interface Thresholds {
+  /** USD per hour. Spend under this is never a spike, however large the ratio. */
+  costFloorPerHour: number;
+  /** Calls per hour. Volume under this is never a spike, for the same reason. */
+  volumeFloorPerHour: number;
 }

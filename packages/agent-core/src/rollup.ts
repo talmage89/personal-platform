@@ -50,6 +50,8 @@ export interface RollupOptions {
   instructions?: string;
   /** Replaces the shared system prompt both kinds of summary are held to. */
   system?: string;
+  /** Alerts already pushed recently, so the catch-up does not repeat them. */
+  recentAlerts?: readonly string[];
 }
 
 const hhmm = (d: Date): string => d.toISOString().slice(5, 16).replace("T", " ");
@@ -175,6 +177,7 @@ export async function rollup({
   linkPath,
   instructions,
   system,
+  recentAlerts,
 }: RollupOptions): Promise<Summary> {
   if (!config) throw new NotConfiguredError();
 
@@ -221,6 +224,7 @@ export async function rollup({
     preamble,
     linkPath,
     system,
+    recentAlerts,
     instructions: instructions ?? DEFAULT_RECAP_INSTRUCTIONS,
   });
 

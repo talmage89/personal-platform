@@ -31,4 +31,5 @@ model User {
   weightEntries  WeightEntry[]
   weightSettings WeightSettings?
   agentView      AgentView?
+  agentChats     AgentChat[]
 }

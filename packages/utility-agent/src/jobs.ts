@@ -1,6 +1,7 @@
 import {
   advanceInterval,
   agentConfig,
+  ask,
   completionMessage,
   narrationConfig,
   nextWindow,
@@ -12,13 +13,19 @@ import {
   sendPush,
   summarizeWindow,
 } from "@platform/agent-core";
+import { chatTools } from "./chat-tools.ts";
 import {
   baselineHistory,
   channelState,
+  chatForAnswering,
   knownModels,
   lastScheduledEnd,
+  noteIndex,
   priorsBetween,
   promptOverride,
+  recentAlertMessages,
+  recordAnswer,
+  recordAnswerFailure,
   recordSend,
   recordSendFailure,
   type StoredSummary,
@@ -52,6 +59,18 @@ const HOURLY_BUDGET_MS = 30 * 60_000;
 const CATCH_UP_BUDGET_MS = 8 * 60_000;
 
 const deadlineIn = (ms: number): Date => new Date(Date.now() + ms);
+
+/**
+ * How far back to look for alerts already sent, so a run does not repeat one.
+ *
+ * A day: long enough that an overnight situation is reported once rather than
+ * eight times, short enough that a problem still going on tomorrow gets a fresh
+ * interruption rather than being silently swallowed forever.
+ */
+const ALERT_MEMORY_MS = 24 * 3_600_000;
+
+const alertsAlreadySent = (): Promise<string[]> =>
+  recentAlertMessages(new Date(Date.now() - ALERT_MEMORY_MS));
 
 /** Any alert the summary sent also proves the channel works. */
 async function noteAlerts(summary: Summary): Promise<void> {
@@ -147,11 +166,12 @@ export async function hourly(): Promise<string> {
 
   if (!window) return ["already up to date", probe].filter(Boolean).join(" · ");
 
-  const [history, models, system, instructions] = await Promise.all([
+  const [history, models, system, instructions, recentAlerts] = await Promise.all([
     baselineHistory(),
     knownModels(),
     promptOverride("system"),
     promptOverride("hourly"),
+    alertsAlreadySent(),
   ]);
 
   const summary = await summarizeWindow({
@@ -161,6 +181,7 @@ export async function hourly(): Promise<string> {
     narration: {
       deadline: deadlineIn(HOURLY_BUDGET_MS),
       linkPath: "/agent",
+      recentAlerts,
       ...(system ? { system } : {}),
       ...(instructions ? { instructions } : {}),
     },
@@ -193,10 +214,11 @@ export async function catchUp(
   end: Date,
   budgetMs = CATCH_UP_BUDGET_MS,
 ): Promise<StoredSummary> {
-  const [priors, instructions, system] = await Promise.all([
+  const [priors, instructions, system, recentAlerts] = await Promise.all([
     priorsBetween(start, end),
     promptOverride("recap"),
     promptOverride("system"),
+    alertsAlreadySent(),
   ]);
 
   const summary = await rollup({
@@ -204,6 +226,7 @@ export async function catchUp(
     priors,
     deadline: deadlineIn(budgetMs),
     linkPath: "/agent",
+    recentAlerts,
     ...(instructions ? { instructions } : {}),
     ...(system ? { system } : {}),
   });
@@ -276,5 +299,82 @@ export async function testChannel(): Promise<string> {
     const message = error instanceof Error ? error.message : String(error);
     await recordSendFailure(message);
     return `test notification FAILED: ${message}`;
+  }
+}
+
+/**
+ * How long one answer may spend.
+ *
+ * Shorter than a catch-up's, because somebody is sitting in front of the page
+ * waiting for it. Long enough that a question needing a dozen lookups is
+ * answered rather than truncated — and a run that hits the ceiling still
+ * answers, from what it has, rather than returning nothing.
+ */
+const CHAT_BUDGET_MS = 12 * 60_000;
+
+/**
+ * Answers the last unanswered question in a thread.
+ *
+ * A job for the same reason the catch-up is one: this reads the warehouse and
+ * reasons over what it finds, which takes minutes, and a connection that has
+ * sent nothing for ten seconds is closed under us. The page marks the thread
+ * pending, starts this, and returns; the answer appears when it lands.
+ *
+ * Idempotent by inspection rather than by a lock — if the last turn is already
+ * an answer there is nothing to do, so a scheduler retry or a double-press
+ * costs one query and no model call.
+ */
+export async function answerChat(chatId?: string): Promise<string> {
+  if (!chatId) return "no chat id given; nothing to do";
+
+  // Every early return below clears the pending mark. A thread the job declined
+  // to answer must not go on claiming to be thinking — "still working" and
+  // "never going to work" look identical on the page, and only one of them is
+  // worth waiting for.
+  if (!narrationConfig()) {
+    await recordAnswerFailure(chatId, "this deployment has no model configured to answer with");
+    return "no model configured; nothing to do";
+  }
+
+  const thread = await chatForAnswering(chatId);
+  if (!thread) return `no such chat: ${chatId}`;
+
+  const question = thread.turns.at(-1);
+  if (!question || question.role !== "user") {
+    await recordAnswerFailure(chatId, "");
+    return `chat ${chatId} has no unanswered question`;
+  }
+
+  const now = new Date();
+
+  try {
+    const [memory, instructions] = await Promise.all([noteIndex(), promptOverride("chat")]);
+
+    const result = await ask({
+      question: question.body,
+      history: thread.turns.slice(0, -1).map((turn) => ({ role: turn.role, content: turn.body })),
+      memory,
+      extraTools: chatTools({ now, chatId }),
+      now,
+      deadline: deadlineIn(CHAT_BUDGET_MS),
+      ...(instructions ? { instructions } : {}),
+    });
+
+    await recordAnswer(chatId, {
+      body: result.text,
+      investigation: result.investigation,
+      costUsd: result.costUsd,
+    });
+
+    return `answered ${chatId}: ${result.investigation.length} lookups, $${result.costUsd.toFixed(4)}${
+      result.stoppedEarly ? ` (${result.stoppedEarly})` : ""
+    }`;
+  } catch (error) {
+    // Recorded before rethrowing. The thread must not be left claiming to be
+    // thinking, and the job must still exit non-zero so the failure is visible
+    // in its log rather than only on a page nobody is looking at.
+    const message = error instanceof Error ? error.message : String(error);
+    await recordAnswerFailure(chatId, message);
+    throw error;
   }
 }

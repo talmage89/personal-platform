@@ -1,5 +1,5 @@
 import { fetchCalls } from "./bigquery.ts";
-import { type NarrationConfig, narrationConfig } from "./config.ts";
+import { type NarrationConfig, narrationConfig, thresholds } from "./config.ts";
 import { type NarrateOptions, narrate } from "./narrate.ts";
 import type { Alert } from "./notify.ts";
 import { analyse, baselineFrom } from "./stats.ts";
@@ -51,7 +51,14 @@ export async function summarizeWindow({
 
   const { calls, truncated } = await fetchCalls(config, window);
   const baseline: Baseline = baselineFrom(history);
-  const stats = analyse({ window, calls, baseline, knownModels, truncated });
+  const stats = analyse({
+    window,
+    calls,
+    baseline,
+    knownModels,
+    truncated,
+    thresholds: thresholds(config),
+  });
 
   // A window with nothing in it still gets a row. Gaps in the history are
   // indistinguishable from "the job did not run", and one of those is a

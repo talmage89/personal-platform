@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { DEFAULT_THRESHOLDS } from "./stats.ts";
+import type { Thresholds } from "./types.ts";
 
 /**
  * Where the logs live, what may read them, and how much detail to ask for.
@@ -69,6 +71,20 @@ export const BUDGETS: Record<DetailLevel, DetailBudget> = {
   },
 };
 
+/**
+ * A number from the environment, where "set to nothing" means "not set".
+ *
+ * `z.coerce.number()` reads an empty string as 0, which for a threshold is the
+ * opposite of the intent: an operator who clears the variable wants the
+ * default back, not a floor of zero that flags everything.
+ */
+const numeric = (fallback: number) =>
+  z
+    .string()
+    .optional()
+    .transform((value) => (value === undefined || value.trim() === "" ? fallback : Number(value)))
+    .pipe(z.number().nonnegative());
+
 const baseSchema = z.object({
   /** Cloud project billed for the queries. Also the project the dataset is in. */
   AGENT_LOGS_PROJECT: z.string().min(1),
@@ -81,6 +97,30 @@ const baseSchema = z.object({
 
   AGENT_SUMMARY_DETAIL: z.enum(DETAIL_LEVELS).default("standard"),
   AGENT_CATCHUP_DETAIL: z.enum(DETAIL_LEVELS).default("deep"),
+
+  /**
+   * How much a single answer on the chat page may read.
+   *
+   * `standard` rather than `deep`, unlike the catch-up: a catch-up is one
+   * expensive report a day, while a conversation is a dozen questions in ten
+   * minutes and the follow-up is usually cheaper than the first question was.
+   * Someone who wants an exhaustive answer can ask for one in words.
+   */
+  AGENT_CHAT_DETAIL: z.enum(DETAIL_LEVELS).default("standard"),
+
+  /**
+   * What counts as enough money, and enough traffic, to be worth reporting.
+   *
+   * These pair with the relative tests in stats.ts. A window is only a spike if
+   * it is both unusual for this agent *and* past one of these floors, because
+   * "three times the usual" over a base of pennies is arithmetic rather than
+   * news. They live in the environment rather than in the code because the
+   * right number is a property of the agent being watched, not of the
+   * summariser — and because the moment you want to change one is the moment
+   * you are reading a false alarm, which is a bad time to need a deploy.
+   */
+  AGENT_COST_FLOOR_USD_PER_HOUR: numeric(DEFAULT_THRESHOLDS.costFloorPerHour),
+  AGENT_VOLUME_FLOOR_PER_HOUR: numeric(DEFAULT_THRESHOLDS.volumeFloorPerHour),
 
   /**
    * Push notifications. Absent means the channel is simply off: findings are
@@ -159,6 +199,8 @@ const narrationSchema = baseSchema.extend({
   AGENT_SUMMARY_MODEL: z.string().min(1),
   /** Falls back to the hourly model. Catch-up reasons over more material. */
   AGENT_CATCHUP_MODEL: z.string().min(1).optional(),
+  /** Falls back to the catch-up model, then to the hourly one. */
+  AGENT_CHAT_MODEL: z.string().min(1).optional(),
 });
 
 /** Enough to read and render. Holds no credential that can spend. */
@@ -219,6 +261,12 @@ export function tableRef(config: AgentConfig): string {
   return `\`${config.AGENT_LOGS_PROJECT}.${config.AGENT_LOGS_DATASET}.${config.AGENT_LOGS_TABLE}\``;
 }
 
+/** The floors stats.ts pairs with each of its relative tests. */
+export const thresholds = (config: AgentConfig): Thresholds => ({
+  costFloorPerHour: config.AGENT_COST_FLOOR_USD_PER_HOUR,
+  volumeFloorPerHour: config.AGENT_VOLUME_FLOOR_PER_HOUR,
+});
+
 export const summaryBudget = (config: AgentConfig): DetailBudget =>
   BUDGETS[config.AGENT_SUMMARY_DETAIL];
 
@@ -227,6 +275,16 @@ export const catchupBudget = (config: AgentConfig): DetailBudget =>
 
 export const catchupModel = (config: NarrationConfig): string =>
   config.AGENT_CATCHUP_MODEL ?? config.AGENT_SUMMARY_MODEL;
+
+export const chatBudget = (config: AgentConfig): DetailBudget => BUDGETS[config.AGENT_CHAT_DETAIL];
+
+/**
+ * Answering a question is nearer to a catch-up than to an hourly briefing —
+ * both reason over a span the asker chose — so it inherits that model before
+ * falling back to the cheap one.
+ */
+export const chatModel = (config: NarrationConfig): string =>
+  config.AGENT_CHAT_MODEL ?? catchupModel(config);
 
 /**
  * Broker key names belonging to the summariser, excluded from every read.

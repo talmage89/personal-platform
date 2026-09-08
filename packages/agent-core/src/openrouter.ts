@@ -14,6 +14,17 @@ const ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
 /** Ceiling on one exchange, tool round-trips included. */
 const REQUEST_TIMEOUT_MS = 300_000;
 
+/**
+ * What is said on the turn where the tools are withheld.
+ *
+ * Withholding them is not enough on its own. Asked again with nothing to call,
+ * the model tended to narrate what it *would* look at next — which then got
+ * stored as the summary — or to return nothing at all. It has to be told, in
+ * words, that this turn is the write-up.
+ */
+const FINAL_TURN =
+  "You have no lookups left. Write the briefing now, using only what you already have. Do not describe what you would examine next, do not ask for anything further, and do not mention the tools. If the evidence left a flag unexplained, say so plainly and say what you did establish.";
+
 export interface ToolSpec {
   name: string;
   description: string;
@@ -61,12 +72,26 @@ export interface ChatOptions {
   model: string;
   system: string;
   user: string;
+  /**
+   * Earlier turns, oldest first, replayed before `user`.
+   *
+   * Empty for a summary, which is one question asked once. The chat page is the
+   * reason this exists: an answer that cannot see what was already asked makes
+   * the person repeat themselves, and repeating themselves is the thing they
+   * came to this page to stop doing.
+   */
+  history?: readonly { role: "user" | "assistant"; content: string }[];
   maxTokens: number;
   tools?: ToolSpec[];
   /** Zero disables tool use even when tools are supplied. */
   maxToolCalls?: number;
   /** Wall-clock ceiling for the whole exchange. Serverless runs are bounded. */
   deadline?: Date;
+  /**
+   * What to say on the turn where the tools are taken away. Overridden by the
+   * chat, whose last turn is an answer to a person rather than a briefing.
+   */
+  finalTurn?: string;
 }
 
 export interface ChatResult {
@@ -114,10 +139,21 @@ async function post(
  * arithmetic that surrounds it was never in doubt.
  */
 export async function chat(config: NarrationConfig, options: ChatOptions): Promise<ChatResult> {
-  const { model, system, user, maxTokens, tools = [], maxToolCalls = 0, deadline } = options;
+  const {
+    model,
+    system,
+    user,
+    history = [],
+    maxTokens,
+    tools = [],
+    maxToolCalls = 0,
+    deadline,
+    finalTurn = FINAL_TURN,
+  } = options;
 
   const messages: Message[] = [
     { role: "system", content: system },
+    ...history.map((turn) => ({ role: turn.role, content: turn.content })),
     { role: "user", content: user },
   ];
 
@@ -162,17 +198,9 @@ export async function chat(config: NarrationConfig, options: ChatOptions): Promi
 
     const offerTools = !forceFinish && schema.length > 0 && performed.length < maxToolCalls;
 
-    // Withholding the tools is not enough on its own. Asked again with nothing
-    // to call, the model tended to narrate what it *would* look at next — which
-    // then got stored as the summary — or to return nothing at all. It has to be
-    // told, in words, that this turn is the write-up.
     if (forceFinish && !finalAsked) {
       finalAsked = true;
-      messages.push({
-        role: "user",
-        content:
-          "You have no lookups left. Write the briefing now, using only what you already have. Do not describe what you would examine next, do not ask for anything further, and do not mention the tools. If the evidence left a flag unexplained, say so plainly and say what you did establish.",
-      });
+      messages.push({ role: "user", content: finalTurn });
     }
 
     const controller = new AbortController();

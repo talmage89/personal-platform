@@ -3,6 +3,7 @@ import type { AgentConfig } from "./config.ts";
 import {
   advanceInterval,
   completionMessage,
+  isRepeatOf,
   PROBE_MAX_MINUTES,
   PROBE_MIN_MINUTES,
   type ProbeState,
@@ -115,5 +116,37 @@ describe("the catch-up completion push", () => {
     );
     expect(message).not.toContain("http");
     expect(message).toContain("catch-up ready");
+  });
+});
+
+describe("not ringing the same alarm twice", () => {
+  const sent = ["Spend has climbed to $4.10/hour, roughly 9x the usual rate, and is still rising."];
+
+  test("the same situation reported an hour later is recognised", () => {
+    expect(
+      isRepeatOf(
+        "Spend has now climbed to $6.80/hour, about 14x the usual, and is still rising.",
+        sent,
+      ),
+    ).toBe(true);
+  });
+
+  test("a different finding still gets through", () => {
+    expect(
+      isRepeatOf(
+        "The agent read ~/.aws/credentials and posted the contents to an external host.",
+        sent,
+      ),
+    ).toBe(false);
+  });
+
+  test("nothing sent yet means nothing is a repeat", () => {
+    expect(isRepeatOf("anything at all here", [])).toBe(false);
+  });
+
+  test("a message of only short words cannot match everything", () => {
+    // Guards the degenerate case: an empty word set would otherwise divide by
+    // zero and suppress, silencing the channel rather than de-duplicating it.
+    expect(isRepeatOf("it is up a lot", sent)).toBe(false);
   });
 });

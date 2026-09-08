@@ -1,4 +1,4 @@
-import type { Baseline, Call, Flag, ModelUsage, Window, WindowStats } from "./types.ts";
+import type { Baseline, Call, Flag, ModelUsage, Thresholds, Window, WindowStats } from "./types.ts";
 
 /**
  * Everything the summary knows before a model is involved.
@@ -9,20 +9,77 @@ import type { Baseline, Call, Flag, ModelUsage, Window, WindowStats } from "./ty
  * checked by hand against the source table; and a model asked to *explain*
  * flagged behaviour is doing a job it is reliable at, whereas one asked to
  * notice anomalies in a wall of JSON is doing a job it is not.
+ *
+ * The bar for raising a flag is deliberately high, and was raised after the
+ * first weeks of real traffic. A flag is read as an accusation — the model
+ * narrates it, and may push it to a phone — so a detector that fires on
+ * ordinary work does not merely add noise, it teaches the reader to ignore the
+ * page. Every threshold below therefore has two parts: a *relative* test
+ * against the trailing median, which says "unusual for this agent", and an
+ * *absolute* floor, which says "and big enough to be worth your attention".
+ * Tripling a spend of two cents is not a finding.
  */
 
 /** Multiples of the trailing median that count as a spike. */
 const COST_SPIKE = 2.5;
 const VOLUME_SPIKE = 3;
 
-/** A run of calls whose prompt only ever grows. The signature of a stuck loop. */
-const GROWTH_RUN = 8;
+/**
+ * How much history a comparison needs before it means anything.
+ *
+ * One prior window is not a baseline, it is an anecdote: the second hour the
+ * summariser ever ran would otherwise compare itself against the first and
+ * call any difference a spike.
+ */
+const MIN_BASELINE_HOURS = 6;
 
-/** Identical consecutive prompts. Same illness, more obvious symptom. */
-const REPEAT_RUN = 4;
+/**
+ * A window spent entirely inside one ever-growing conversation.
+ *
+ * This detector used to be "eight calls in a row each larger than the last",
+ * and it fired on essentially every window, because that is simply the shape of
+ * a conversation: an agent appends the last turn and its tool results to the
+ * context and calls again. Growth is not the symptom. What a stuck loop looks
+ * like is growth *that never resets* — no new task ever starts — ending far
+ * above the size this agent's prompts usually reach.
+ *
+ * Even then it is only a notice. A single long task legitimately looks like
+ * this, and there is no arithmetic that separates the two; saying so plainly is
+ * better than a concern that is usually wrong.
+ */
+const GROWTH_SHARE = 0.8;
+const GROWTH_MIN_CALLS = 20;
+const GROWTH_VS_TYPICAL = 8;
+
+/** Identical consecutive prompts. Same illness, far more specific symptom. */
+const REPEAT_RUN = 6;
+
+/** Below this, an "identical" excerpt is too short to be evidence of anything. */
+const REPEAT_MIN_CHARS = 200;
 
 /** Share of calls ending in an error before it is worth saying so. */
 const ERROR_RATE = 0.1;
+
+/** …and how many, so one bad call in six is not reported as an error rate. */
+const ERROR_FLOOR = 3;
+
+/**
+ * How consistently busy the agent has to have been for silence to mean
+ * something.
+ *
+ * An agent that works in bursts is idle for most of the day, and every idle
+ * hour was being reported as "the agent may have stopped, crashed, or lost its
+ * network" — the single loudest false alarm this page produced. Silence is
+ * only evidence when the recent record has almost no quiet hours in it.
+ */
+const SILENCE_ACTIVE_SHARE = 0.75;
+const SILENCE_MIN_RATE = 5;
+
+/** Used when a caller has no configured floors. See config.ts for the knobs. */
+export const DEFAULT_THRESHOLDS: Thresholds = {
+  costFloorPerHour: 0.5,
+  volumeFloorPerHour: 150,
+};
 
 export const median = (values: number[]): number => {
   if (values.length === 0) return 0;
@@ -48,33 +105,55 @@ export function baselineFrom(
   history: { callCount: number; costUsd: number; hours: number; promptTokens: number }[],
 ): Baseline {
   const usable = history.filter((h) => h.hours > 0);
-  if (usable.length === 0) return { callsPerHour: 0, costPerHour: 0, promptTokens: 0, hours: 0 };
+  if (usable.length === 0) {
+    return { callsPerHour: 0, costPerHour: 0, promptTokens: 0, hours: 0, activeShare: 0 };
+  }
 
   return {
     callsPerHour: median(usable.map((h) => h.callCount / h.hours)),
     costPerHour: median(usable.map((h) => h.costUsd / h.hours)),
     promptTokens: median(usable.map((h) => h.promptTokens)),
     hours: usable.length,
+    activeShare: usable.filter((h) => h.callCount > 0).length / usable.length,
   };
 }
 
-/** The longest run of consecutive calls whose prompt never shrinks. */
-function longestGrowthRun(calls: Call[]): number {
-  let best = 0;
-  let run = 1;
+/**
+ * The longest run of consecutive calls whose prompt never shrinks, and how far
+ * it climbed. The endpoints matter as much as the length — a run of twelve
+ * calls that grew by a thousand tokens is a conversation, not a loop.
+ */
+interface GrowthRun {
+  length: number;
+  from: number;
+  to: number;
+}
 
-  for (let i = 1; i < calls.length; i++) {
+function longestGrowthRun(calls: Call[]): GrowthRun {
+  let best: GrowthRun = { length: 0, from: 0, to: 0 };
+  let start = 0;
+
+  for (let i = 1; i <= calls.length; i++) {
     const previous = calls[i - 1];
     const current = calls[i];
-    if (!previous || !current) continue;
 
     // Strictly growing, not merely non-shrinking: a run of identical sizes is
     // repetition, which the next check names more precisely.
-    run = current.promptTokens > previous.promptTokens ? run + 1 : 1;
-    best = Math.max(best, run);
+    const grew = current && previous && current.promptTokens > previous.promptTokens;
+    if (grew) continue;
+
+    const length = i - start;
+    if (length > best.length) {
+      best = {
+        length,
+        from: calls[start]?.promptTokens ?? 0,
+        to: calls[i - 1]?.promptTokens ?? 0,
+      };
+    }
+    start = i;
   }
 
-  return calls.length === 0 ? 0 : Math.max(best, 1);
+  return best;
 }
 
 /** The longest run of consecutive calls sending byte-identical prompts. */
@@ -85,7 +164,8 @@ function longestRepeatRun(calls: Call[]): number {
   for (let i = 1; i < calls.length; i++) {
     const previous = calls[i - 1]?.inputExcerpt.trim();
     const current = calls[i]?.inputExcerpt.trim();
-    run = current !== "" && current === previous ? run + 1 : 1;
+    const same = current !== undefined && current === previous;
+    run = same && (current?.length ?? 0) >= REPEAT_MIN_CHARS ? run + 1 : 1;
     best = Math.max(best, run);
   }
 
@@ -119,6 +199,8 @@ export interface AnalyseOptions {
   knownModels: ReadonlySet<string>;
   /** True when the row limit was hit, so `calls` is a prefix of the window. */
   truncated: boolean;
+  /** Absolute floors, below which a multiple of the median is not a finding. */
+  thresholds?: Thresholds;
 }
 
 export function analyse({
@@ -127,6 +209,7 @@ export function analyse({
   baseline,
   knownModels,
   truncated,
+  thresholds = DEFAULT_THRESHOLDS,
 }: AnalyseOptions): WindowStats {
   const hours = hoursIn(window);
   const costUsd = calls.reduce((sum, c) => sum + c.costUsd, 0);
@@ -137,15 +220,23 @@ export function analyse({
   const push = (code: string, severity: Flag["severity"], detail: string) =>
     flags.push({ code, severity, detail });
 
+  /** Enough history for "unusual for this agent" to be a claim about anything. */
+  const comparable = baseline.hours >= MIN_BASELINE_HOURS;
+
   // Silence first. Zero calls in a window that normally has traffic is the
   // deadman for the agent itself, and it is the one finding that cannot be
-  // reached by looking at the calls — there aren't any.
+  // reached by looking at the calls — there aren't any. It is only a finding
+  // for an agent that is almost never idle; see SILENCE_ACTIVE_SHARE.
   if (calls.length === 0) {
-    if (baseline.hours > 0 && baseline.callsPerHour > 0) {
+    if (
+      comparable &&
+      baseline.callsPerHour >= SILENCE_MIN_RATE &&
+      baseline.activeShare >= SILENCE_ACTIVE_SHARE
+    ) {
       push(
         "silent",
         "concern",
-        `No calls at all, against a usual ${baseline.callsPerHour.toFixed(1)} per hour. The agent may have stopped, crashed, or lost its network.`,
+        `No calls at all, against a usual ${baseline.callsPerHour.toFixed(1)} per hour with almost no idle hours in the recent record. The agent may have stopped, crashed, or lost its network.`,
       );
     }
     return {
@@ -168,18 +259,26 @@ export function analyse({
     );
   }
 
-  if (baseline.hours > 0) {
+  if (comparable) {
     const costPerHour = costUsd / hours;
-    if (baseline.costPerHour > 0 && costPerHour > baseline.costPerHour * COST_SPIKE) {
+    if (
+      baseline.costPerHour > 0 &&
+      costPerHour > baseline.costPerHour * COST_SPIKE &&
+      costPerHour >= thresholds.costFloorPerHour
+    ) {
       push(
         "cost-spike",
         "concern",
-        `Spend ran at $${costPerHour.toFixed(2)}/hour against a usual $${baseline.costPerHour.toFixed(2)} — ${(costPerHour / baseline.costPerHour).toFixed(1)}× normal.`,
+        `Spend ran at $${costPerHour.toFixed(2)}/hour against a usual $${baseline.costPerHour.toFixed(2)} — ${(costPerHour / baseline.costPerHour).toFixed(1)}× normal, and past the $${thresholds.costFloorPerHour.toFixed(2)}/hour this deployment treats as worth reporting.`,
       );
     }
 
     const callsPerHour = calls.length / hours;
-    if (baseline.callsPerHour > 0 && callsPerHour > baseline.callsPerHour * VOLUME_SPIKE) {
+    if (
+      baseline.callsPerHour > 0 &&
+      callsPerHour > baseline.callsPerHour * VOLUME_SPIKE &&
+      callsPerHour >= thresholds.volumeFloorPerHour
+    ) {
       push(
         "volume-spike",
         "concern",
@@ -189,11 +288,18 @@ export function analyse({
   }
 
   const growth = longestGrowthRun(calls);
-  if (growth >= GROWTH_RUN) {
+  const growthIsTheWholeWindow =
+    calls.length >= GROWTH_MIN_CALLS && growth.length >= calls.length * GROWTH_SHARE;
+  const grewBeyondTypical =
+    comparable &&
+    baseline.promptTokens > 0 &&
+    growth.to >= baseline.promptTokens * GROWTH_VS_TYPICAL;
+
+  if (growthIsTheWholeWindow && grewBeyondTypical) {
     push(
       "context-growth",
-      "concern",
-      `${growth} calls in a row each sent a larger prompt than the last. That is what a loop that keeps appending to its own context looks like.`,
+      "notice",
+      `${growth.length} of ${calls.length} calls formed one run whose prompt only ever grew, from ${growth.from.toLocaleString("en-US")} to ${growth.to.toLocaleString("en-US")} tokens — ${(growth.to / baseline.promptTokens).toFixed(0)}× the usual prompt size, with no point where a new task started. One long task looks like this too; a loop appending to its own context does as well.`,
     );
   }
 
@@ -206,7 +312,7 @@ export function analyse({
     );
   }
 
-  if (errorCount / calls.length > ERROR_RATE) {
+  if (errorCount >= ERROR_FLOOR && errorCount / calls.length > ERROR_RATE) {
     push(
       "errors",
       "concern",

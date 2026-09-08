@@ -26,6 +26,21 @@ describe("Root", () => {
   test("carries a title through", async () => {
     expect(await render(<Root title="weight">x</Root>)).toContain("<title>weight</title>");
   });
+
+  test("polls with a meta refresh when asked, and only then", async () => {
+    // The one way to wait for work happening elsewhere on a platform that
+    // serves `script-src 'none'`. A page that emits this unconditionally
+    // reloads forever, fighting the reader and keeping the database awake.
+    const waiting = await render(
+      <Root title="agent" refreshSeconds={6}>
+        x
+      </Root>,
+    );
+    expect(waiting).toContain('http-equiv="refresh"');
+    expect(waiting).toContain('content="6"');
+
+    expect(await render(<Root title="agent">x</Root>)).not.toContain("refresh");
+  });
 });
 
 describe("Layout", () => {
@@ -50,6 +65,15 @@ describe("Layout", () => {
       </Layout>,
     );
     expect(html).not.toContain('href="/"');
+  });
+
+  test("passes a refresh through to the document head", async () => {
+    const html = await render(
+      <Layout title="agent" refreshSeconds={6}>
+        x
+      </Layout>,
+    );
+    expect(html).toContain('http-equiv="refresh"');
   });
 
   test("renders its children", async () => {

@@ -9,12 +9,20 @@ import type {
   ToolCallRecord,
 } from "@platform/agent-core";
 import {
+  DEFAULT_CHAT_SYSTEM,
   DEFAULT_HOURLY_INSTRUCTIONS,
   DEFAULT_RECAP_INSTRUCTIONS,
   DEFAULT_SHARED_SYSTEM,
   PROBE_MIN_MINUTES,
 } from "@platform/agent-core";
-import { type AgentSummary, type AgentSummaryKind, db, resolveUser } from "@platform/db";
+import {
+  type AgentChatMessage,
+  type AgentChatRole,
+  type AgentSummary,
+  type AgentSummaryKind,
+  db,
+  resolveUser,
+} from "@platform/db";
 
 /**
  * Every database call this utility makes. Nothing above this file imports `db`,
@@ -82,6 +90,29 @@ export async function recentSummaries(limit = 50): Promise<StoredSummary[]> {
     take: limit,
   });
   return rows.map(hydrate);
+}
+
+/**
+ * Alert messages pushed by recent summaries.
+ *
+ * Handed to the narrator so the alert tool can refuse a restatement of one. An
+ * agent in a state worth reporting is usually still in it an hour later, and
+ * without this the first real finding is followed by a notification every hour
+ * until somebody fixes it — which is how a channel stops being read.
+ */
+export async function recentAlertMessages(since: Date): Promise<string[]> {
+  const rows = await db().agentSummary.findMany({
+    where: { createdAt: { gte: since } },
+    orderBy: { createdAt: "desc" },
+    take: BASELINE_WINDOWS,
+    select: { alerts: true },
+  });
+
+  return rows.flatMap((row) =>
+    asArray<AlertRecord>(row.alerts)
+      .map((alert) => alert?.message ?? "")
+      .filter(Boolean),
+  );
 }
 
 /** The end of the newest scheduled window, or null if there is not one yet. */
@@ -217,6 +248,28 @@ export async function summariesPage(
   return { rows: rows.map(hydrate), total };
 }
 
+/**
+ * Stored summaries overlapping a span, newest first.
+ *
+ * Every kind, unlike `priorsBetween`. A catch-up excludes manual windows
+ * because feeding a summary of a period back into a summary of that period is
+ * the one thing the roll-up exists to avoid; a person asking a question has no
+ * such problem and would reasonably expect "what did you tell me on Tuesday" to
+ * include the brief they read on Tuesday.
+ */
+export async function summariesBetween(
+  start: Date,
+  end: Date,
+  limit: number,
+): Promise<StoredSummary[]> {
+  const rows = await db().agentSummary.findMany({
+    where: { periodEnd: { gt: start }, periodStart: { lt: end } },
+    orderBy: { periodEnd: "desc" },
+    take: limit,
+  });
+  return rows.map(hydrate);
+}
+
 export async function summaryById(id: string): Promise<StoredSummary | null> {
   const row = await db().agentSummary.findUnique({ where: { id } });
   return row ? hydrate(row) : null;
@@ -297,7 +350,7 @@ export async function recordSendFailure(message: string): Promise<void> {
   });
 }
 
-export type PromptKind = "system" | "hourly" | "recap";
+export type PromptKind = "system" | "hourly" | "recap" | "chat";
 
 export interface EditablePrompt {
   kind: PromptKind;
@@ -314,6 +367,7 @@ const DEFAULTS: Record<PromptKind, string> = {
   system: DEFAULT_SHARED_SYSTEM,
   hourly: DEFAULT_HOURLY_INSTRUCTIONS,
   recap: DEFAULT_RECAP_INSTRUCTIONS,
+  chat: DEFAULT_CHAT_SYSTEM,
 };
 
 /** The override for one prompt, or null to use the default. */
@@ -327,7 +381,7 @@ export async function editablePrompts(): Promise<EditablePrompt[]> {
   const rows = await db().agentPrompt.findMany();
   const byKind = new Map(rows.map((row) => [row.kind, row]));
 
-  return (["system", "hourly", "recap"] as const).map((kind) => {
+  return (["system", "hourly", "recap", "chat"] as const).map((kind) => {
     const row = byKind.get(kind);
     return {
       kind,
@@ -365,4 +419,309 @@ export async function savePrompt(kind: PromptKind, body: string): Promise<void> 
 /** Drops the override, returning the prompt to the text compiled into the build. */
 export async function resetPrompt(kind: PromptKind): Promise<void> {
   await db().agentPrompt.deleteMany({ where: { kind } });
+}
+
+/**
+ * Conversations, and the notes they leave behind.
+ *
+ * The chat is a second way into the same record the summaries describe, for the
+ * questions that do not fit inside one window. Everything below is either a
+ * thread or a note; nothing here reads the warehouse, which the tools in
+ * chat-tools.ts and agent-core do.
+ */
+
+/** A question longer than this is a pasted document, not a question. */
+export const MAX_QUESTION_CHARS = 4_000;
+
+/** Ceilings on one note. Generous — the point is to stop a paste accident. */
+export const MAX_NOTE_SUMMARY_CHARS = 300;
+export const MAX_NOTE_BODY_CHARS = 8_000;
+
+/** How many notes ride in every prompt. Past this, memory is costing more than it saves. */
+const MAX_NOTES_IN_PROMPT = 80;
+
+/** Turns replayed into the prompt. Older ones are dropped, oldest first. */
+const MAX_TURNS_REPLAYED = 24;
+
+export interface ChatSummaryRow {
+  id: string;
+  title: string;
+  pendingSince: Date | null;
+  lastError: string | null;
+  updatedAt: Date;
+}
+
+export interface ChatTurnRow {
+  id: string;
+  role: AgentChatRole;
+  body: string;
+  investigation: ToolCallRecord[];
+  costUsd: number;
+  createdAt: Date;
+}
+
+export interface ChatThread extends ChatSummaryRow {
+  createdAt: Date;
+  turns: ChatTurnRow[];
+}
+
+/** The opening question, trimmed to something recognisable in a list. */
+function titleFrom(question: string): string {
+  const flat = question.replace(/\s+/g, " ").trim();
+  if (flat === "") return "(no question)";
+  return flat.length <= 70 ? flat : `${flat.slice(0, 70).replace(/\s\S*$/, "")}…`;
+}
+
+export const trimQuestion = (question: string): string =>
+  question.trim().slice(0, MAX_QUESTION_CHARS);
+
+/**
+ * Opens a thread with its first question.
+ *
+ * `pendingSince` is set here rather than by the job, so the page can say "still
+ * thinking" from the moment the form is submitted. A job that never starts
+ * therefore shows as a stuck thread rather than as a question that was silently
+ * dropped — which is the failure you would otherwise only notice by its absence.
+ *
+ * Two writes rather than one nested create, deliberately. A nested write is an
+ * implicit transaction, and the Neon HTTP driver has none — it rejects with
+ * "Transactions are not supported in HTTP mode", which would make this fail in
+ * production and nowhere else, since a laptop runs plain Postgres. The row
+ * order is chosen so the survivable half survives: a chat with no message
+ * renders as an empty thread you can type into, which is a far better outcome
+ * than a message with no chat, which cannot exist at all.
+ */
+export async function startChat(githubId: string, question: string): Promise<string> {
+  const user = await resolveUser(githubId);
+  const body = trimQuestion(question);
+
+  const chat = await db().agentChat.create({
+    data: { userId: user.id, title: titleFrom(body), pendingSince: new Date() },
+    select: { id: true },
+  });
+
+  await db().agentChatMessage.create({ data: { chatId: chat.id, role: "user", body } });
+
+  return chat.id;
+}
+
+/** Adds a question to an existing thread, and marks it as awaiting an answer. */
+export async function askInChat(chatId: string, githubId: string, question: string): Promise<void> {
+  const user = await resolveUser(githubId);
+  const owned = await db().agentChat.findFirst({
+    where: { id: chatId, userId: user.id },
+    select: { id: true },
+  });
+  if (!owned) return;
+
+  await db().agentChatMessage.create({
+    data: { chatId, role: "user", body: trimQuestion(question) },
+  });
+  await db().agentChat.update({
+    where: { id: chatId },
+    data: { pendingSince: new Date(), lastError: null },
+  });
+}
+
+/**
+ * Puts a thread back into "awaiting an answer" without asking anything new.
+ *
+ * The job answers whatever is last and unanswered, so restoring that state is
+ * the whole of a retry — appending the question again would leave the thread
+ * showing it twice, which reads as though it had been asked twice. Returns
+ * false when the last turn is already an answer, so a stale retry button does
+ * not start a job with nothing to do.
+ */
+export async function retryChat(chatId: string, githubId: string): Promise<boolean> {
+  const user = await db().user.findUnique({ where: { githubId }, select: { id: true } });
+  if (!user) return false;
+
+  const chat = await db().agentChat.findFirst({
+    where: { id: chatId, userId: user.id },
+    select: { messages: { orderBy: { createdAt: "desc" }, take: 1, select: { role: true } } },
+  });
+  if (chat?.messages[0]?.role !== "user") return false;
+
+  await db().agentChat.update({
+    where: { id: chatId },
+    data: { pendingSince: new Date(), lastError: null },
+  });
+  return true;
+}
+
+const hydrateTurn = (row: AgentChatMessage): ChatTurnRow => ({
+  id: row.id,
+  role: row.role,
+  body: row.body,
+  investigation: asArray<ToolCallRecord>(row.investigation),
+  costUsd: fromMicro(row.costMicroUsd),
+  createdAt: row.createdAt,
+});
+
+/** Threads this person has, newest activity first. */
+export async function chatList(githubId: string, limit = 40): Promise<ChatSummaryRow[]> {
+  const user = await db().user.findUnique({ where: { githubId }, select: { id: true } });
+  if (!user) return [];
+
+  return db().agentChat.findMany({
+    where: { userId: user.id },
+    orderBy: { updatedAt: "desc" },
+    take: limit,
+    select: { id: true, title: true, pendingSince: true, lastError: true, updatedAt: true },
+  });
+}
+
+/** One thread in full, or null if it is not this person's. */
+export async function chatThread(chatId: string, githubId: string): Promise<ChatThread | null> {
+  const user = await db().user.findUnique({ where: { githubId }, select: { id: true } });
+  if (!user) return null;
+
+  const chat = await db().agentChat.findFirst({
+    where: { id: chatId, userId: user.id },
+    include: { messages: { orderBy: { createdAt: "asc" } } },
+  });
+  if (!chat) return null;
+
+  return {
+    id: chat.id,
+    title: chat.title,
+    pendingSince: chat.pendingSince,
+    lastError: chat.lastError,
+    createdAt: chat.createdAt,
+    updatedAt: chat.updatedAt,
+    turns: chat.messages.map(hydrateTurn),
+  };
+}
+
+/**
+ * The thread as the job sees it: no session behind it, so no owner to check.
+ *
+ * Safe because the id is not a capability anyone can present — it reaches the
+ * job as an argument the web service chose, never as user input.
+ */
+export async function chatForAnswering(
+  chatId: string,
+): Promise<{ id: string; turns: ChatTurnRow[] } | null> {
+  const chat = await db().agentChat.findUnique({
+    where: { id: chatId },
+    include: { messages: { orderBy: { createdAt: "asc" }, take: MAX_TURNS_REPLAYED } },
+  });
+  if (!chat) return null;
+  return { id: chat.id, turns: chat.messages.map(hydrateTurn) };
+}
+
+export async function recordAnswer(
+  chatId: string,
+  answer: { body: string; investigation: ToolCallRecord[]; costUsd: number },
+): Promise<void> {
+  await db().agentChatMessage.create({
+    data: {
+      chatId,
+      role: "assistant",
+      body: answer.body,
+      investigation: answer.investigation,
+      costMicroUsd: toMicro(answer.costUsd),
+    },
+  });
+  await db().agentChat.update({
+    where: { id: chatId },
+    data: { pendingSince: null, lastError: null },
+  });
+}
+
+/**
+ * Records that an answer did not happen.
+ *
+ * Clearing `pendingSince` matters as much as storing the message: a thread left
+ * pending by a crash claims to be thinking forever, and the page has no way to
+ * tell that apart from a job that is genuinely still working.
+ */
+export async function recordAnswerFailure(chatId: string, message: string): Promise<void> {
+  await db().agentChat.update({
+    where: { id: chatId },
+    // An empty message means "there was nothing to do here", which is not a
+    // failure and should not leave an error on the page — only the pending
+    // mark needs clearing.
+    data: { pendingSince: null, lastError: message.slice(0, 500) || null },
+  });
+}
+
+export async function deleteChat(chatId: string, githubId: string): Promise<void> {
+  const user = await db().user.findUnique({ where: { githubId }, select: { id: true } });
+  if (!user) return;
+  // Messages go with it — the relation cascades. See agent.prisma.
+  await db().agentChat.deleteMany({ where: { id: chatId, userId: user.id } });
+}
+
+export interface NoteRow {
+  key: string;
+  summary: string;
+  body: string;
+  sourceChatId: string | null;
+  updatedAt: Date;
+}
+
+export async function notes(): Promise<NoteRow[]> {
+  return db().agentNote.findMany({
+    orderBy: { updatedAt: "desc" },
+    take: MAX_NOTES_IN_PROMPT,
+    select: { key: true, summary: true, body: true, sourceChatId: true, updatedAt: true },
+  });
+}
+
+/**
+ * The memory as it appears in every prompt: one line per note.
+ *
+ * Summaries only. The bodies are read on demand, because a memory that puts
+ * everything it knows into every prompt stops being a memory and becomes a
+ * cost — and because the summary line is written to carry the fact itself, not
+ * a pointer to where the fact is kept.
+ */
+export async function noteIndex(): Promise<string> {
+  const rows = await db().agentNote.findMany({
+    orderBy: { updatedAt: "desc" },
+    take: MAX_NOTES_IN_PROMPT,
+    select: { key: true, summary: true },
+  });
+
+  return rows.map((row) => `- ${row.key}: ${row.summary}`).join("\n");
+}
+
+export async function noteByKey(key: string): Promise<NoteRow | null> {
+  return db().agentNote.findUnique({
+    where: { key },
+    select: { key: true, summary: true, body: true, sourceChatId: true, updatedAt: true },
+  });
+}
+
+/** Keys are handles the model chooses, so they are normalised rather than trusted. */
+export const normaliseKey = (key: string): string =>
+  key
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
+
+export async function saveNote(note: {
+  key: string;
+  summary: string;
+  body: string;
+  sourceChatId?: string | null;
+}): Promise<string | null> {
+  const key = normaliseKey(note.key);
+  if (!key) return null;
+
+  const data = {
+    summary: note.summary.trim().slice(0, MAX_NOTE_SUMMARY_CHARS),
+    body: note.body.trim().slice(0, MAX_NOTE_BODY_CHARS),
+    sourceChatId: note.sourceChatId ?? null,
+  };
+
+  await db().agentNote.upsert({ where: { key }, create: { key, ...data }, update: data });
+  return key;
+}
+
+export async function deleteNote(key: string): Promise<void> {
+  await db().agentNote.deleteMany({ where: { key: normaliseKey(key) } });
 }

@@ -13,7 +13,7 @@ describe("the agent utility", () => {
     // Pinned rather than counted: a job appearing here without a scheduler
     // entry never runs, and one disappearing leaves a scheduler calling a name
     // that 404s. Either way the list is the contract, so it is written out.
-    expect(Object.keys(agent.jobs ?? {})).toEqual(["hourly", "catch-up", "test-channel"]);
+    expect(Object.keys(agent.jobs ?? {})).toEqual(["hourly", "catch-up", "chat", "test-channel"]);
   });
 
   test("the narrating job is a no-op without the means to call a model", async () => {

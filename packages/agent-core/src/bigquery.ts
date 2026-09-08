@@ -241,6 +241,7 @@ WHERE dt BETWEEN @dtStart AND @dtEnd
   ${ONLY_REAL_CALLS}
 ORDER BY \`at\`
 LIMIT @rowLimit
+OFFSET @offset
 `;
 
 /** Matching calls, with a longer excerpt than the window read carries. */
@@ -350,15 +351,32 @@ function windowParams(window: Window): QueryParameter[] {
   ];
 }
 
-/** Every model call in a window, oldest first. */
+export interface PageOptions {
+  /** Rows to return. Defaults to the per-window cap. */
+  limit?: number;
+  /** Rows to skip, in time order. */
+  offset?: number;
+}
+
+/**
+ * Every model call in a window, oldest first.
+ *
+ * The summariser reads a whole window at once, which is what the defaults are
+ * for. The chat reads spans a person names — "last Tuesday", "the past
+ * fortnight" — where pulling five thousand rows to show twenty would be an
+ * expensive way to answer a cheap question, so it pages.
+ */
 export async function fetchCalls(
   config: AgentConfig,
   window: Window,
+  { limit = ROW_LIMIT, offset = 0 }: PageOptions = {},
 ): Promise<{ calls: Call[]; truncated: boolean; bytesProcessed: number }> {
+  const rowLimit = Math.max(1, Math.min(limit, ROW_LIMIT));
   const params = [
     ...windowParams(window),
     int("excerpt", EXCERPT_CHARS),
-    int("rowLimit", ROW_LIMIT),
+    int("rowLimit", rowLimit),
+    int("offset", Math.max(0, offset)),
     str("selfMarker", config.AGENT_SELF_MARKER),
     strArray("selfKeys", selfKeyNames(config)),
   ];
@@ -367,7 +385,7 @@ export async function fetchCalls(
     config,
     SQL(tableRef(config)),
     params,
-    ROW_LIMIT,
+    rowLimit,
   );
 
   return { calls: rows.map(decode), truncated, bytesProcessed };

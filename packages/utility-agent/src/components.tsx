@@ -10,7 +10,7 @@ import {
   relativeAge,
   worstSeverity,
 } from "./format.ts";
-import type { StoredSummary } from "./repository.ts";
+import { type ChatTurnRow, MAX_QUESTION_CHARS, type StoredSummary } from "./repository.ts";
 
 /**
  * The session is guaranteed by the gate, so this reads it rather than checking
@@ -22,8 +22,15 @@ export function sessionOf(c: Context<AuthEnv>): SessionPayload {
   return session;
 }
 
-export function AgentPage({ children }: PropsWithChildren) {
-  return <Layout title="agent">{children}</Layout>;
+export function AgentPage({
+  refreshSeconds,
+  children,
+}: PropsWithChildren<{ refreshSeconds?: number }>) {
+  return (
+    <Layout title="agent" refreshSeconds={refreshSeconds}>
+      {children}
+    </Layout>
+  );
 }
 
 export function Stat({ label, value, detail }: { label: string; value: string; detail?: string }) {
@@ -216,5 +223,65 @@ export function Pager({ page, pages }: { page: number; pages: number }) {
         <span class="text-muted">older →</span>
       )}
     </nav>
+  );
+}
+
+/**
+ * One turn of a conversation.
+ *
+ * The question is set apart by a rule and a marker rather than a bubble: this
+ * platform has one column and no client JavaScript, and a chat transcript is
+ * fundamentally a document. Answers get body text because they are the thing
+ * you came to read.
+ */
+export function Turn({ turn, now }: { turn: ChatTurnRow; now: Date }) {
+  if (turn.role === "user") {
+    return (
+      <section class="mt-8">
+        <hr class="mb-6" />
+        <p class="flex flex-wrap items-baseline justify-between gap-x-4">
+          <span class="font-medium">{turn.body}</span>
+          <span class="text-muted text-sm">{relativeAge(turn.createdAt, now)}</span>
+        </p>
+      </section>
+    );
+  }
+
+  return (
+    <section class="mt-4">
+      {turn.body.split(/\n{2,}/).map((paragraph, index) => (
+        <p key={index} class="mt-3">
+          {paragraph}
+        </p>
+      ))}
+      <Investigation calls={turn.investigation} />
+    </section>
+  );
+}
+
+/** The box a question is typed into. Same shape on the list and in a thread. */
+export function AskForm({
+  action,
+  label,
+  placeholder,
+}: {
+  action: string;
+  label: string;
+  placeholder: string;
+}) {
+  return (
+    <form method="post" action={action} class="mt-6">
+      <textarea
+        name="question"
+        rows={3}
+        required
+        maxlength={MAX_QUESTION_CHARS}
+        placeholder={placeholder}
+        class="w-full resize-y border border-current/20 p-3 text-sm leading-relaxed"
+      />
+      <button type="submit" class="mt-3 cursor-pointer underline hover:no-underline">
+        {label}
+      </button>
+    </form>
   );
 }

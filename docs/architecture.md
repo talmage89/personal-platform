@@ -153,7 +153,7 @@ personal-platform/
     ├── utility-kit/                @platform/utility-kit   the Utility contract
     ├── utility-weight/             @platform/utility-weight   daily weigh-ins
     ├── agent-core/                 @platform/agent-core    stats, redaction, narration, tools
-    └── utility-agent/              @platform/utility-agent hourly agent summaries
+    └── utility-agent/              @platform/utility-agent agent summaries, chat, memory
 ```
 
 ### `packages/db`
@@ -339,6 +339,43 @@ cannot be reached by looking at the calls, because there are none. Medians
 rather than means throughout, so one runaway hour does not move the reference
 point that the next runaway hour is judged against.
 
+### A flag is an accusation, so the bar is high
+
+The first version of every detector above fired on ordinary work, and the first
+weeks of real traffic were a continuous false alarm: a context that grew, spend
+that tripled from two cents to six, a busy hour against a quiet median, an idle
+hour reported as a crashed agent. None of it was true, and none of it was a bug
+in the arithmetic — the arithmetic was right and the question was wrong.
+
+A flag is not a private note. It is narrated in the summary, it can be pushed to
+a phone, and a detector that fires on ordinary work does not merely add noise:
+it teaches the reader to ignore the page, which costs more than the detector
+could ever have been worth. So every test now has two halves, and both must
+hold:
+
+- **Relative** — unusual for this agent, against the trailing median.
+- **Absolute** — and big enough to matter, against a floor. The floors are
+  environment variables (`AGENT_COST_FLOOR_USD_PER_HOUR`,
+  `AGENT_VOLUME_FLOOR_PER_HOUR`), because what counts as a lot of money is a
+  property of the agent being watched rather than of the summariser, and because
+  the moment you want to change one is the moment you are reading a false alarm.
+
+Three of the detectors changed shape rather than threshold:
+
+- **Context growth** used to be "eight calls in a row, each larger than the
+  last", which is simply what a conversation *is* — the agent appends the last
+  turn and calls again. It is now "the window was one unbroken run that never
+  reset, ending many times larger than this agent's prompts usually get", and it
+  is a notice rather than a concern, because one long task looks exactly like a
+  loop and no arithmetic separates them. Saying so is better than a concern that
+  is usually wrong.
+- **Silence** now requires that the recent record has almost no idle hours in
+  it. An agent that works in bursts is idle most of the day, and each of those
+  hours was being reported as "may have stopped, crashed, or lost its network".
+- **Comparisons need a baseline**, not an anecdote: six summarised hours before
+  any window is judged against the median, or the second hour the summariser
+  ever ran calls the first one's difference a spike.
+
 ### Prompts are redacted before they leave the process
 
 Summarising an agent's traffic means reading its prompts, and its prompts
@@ -419,6 +456,22 @@ environment", which has no numeric signature and is the thing actually worth
 waking someone for. Alerting has its own small budget so that it still works at
 `brief`, where the budget for looking things up is zero.
 
+Which is also the whole difficulty with it. Handed a flagged window, a model
+reliably decides the flag is what the alert tool is for, and the channel fills
+with notifications about an agent doing its job slightly more expensively than
+yesterday. Three things hold that line, and only the first is a prompt:
+
+- The tool's description spends more words on what is *not* an alert than on
+  what is — a flag, a context that grew, a busier window, retries, errors, an
+  unfamiliar model. "If you are weighing whether it clears the bar, it does not."
+- `basis` is a required argument: the specific command, host, credential or
+  trace id that justifies waking someone. "The statistics show" is refused.
+- An alert that restates one already sent in the last day is refused outright,
+  compared on word overlap with the digits stripped — because the number is
+  exactly what changes between two reports of one ongoing situation. An agent in
+  a bad state is usually still in it an hour later, and a notification every hour
+  until somebody fixes it is how a channel stops being read.
+
 A notification path nobody has exercised is indistinguishable from a quiet week,
 right up until the moment it matters. So the summariser proves the channel:
 hourly at first, then doubling — 2h, 4h, 8h, … — to a floor of one probe a week.
@@ -442,13 +495,70 @@ environment, as `brief | standard | deep`. It is a named level rather than six
 numbers because the levels move sample size, output length and tool budget
 together, and moving them independently mostly produces incoherent combinations.
 
+### Asking, rather than reading
+
+The summaries answer "what happened between two o'clock and three". They are a
+poor answer to almost everything actually asked — "has it done this before",
+"what does a normal Tuesday cost", "why does it keep touching that file" —
+because those range across the record instead of sitting inside one window, and
+because the record only gets longer.
+
+`/agent/chat` is the same machinery pointed the other way. The same warehouse,
+the same redaction, the same bounded tool loop, but with the time range as an
+argument rather than a fixed frame. `tools.ts` deliberately does not let a
+summary read outside the window it claims to cover; `explore.ts` takes `since`
+and `until`, and what replaces the fixed window as the safety property is a cap
+on how far one lookup may reach — 92 days for an aggregate, 14 for reading
+dialog, because the warehouse bills by bytes scanned.
+
+It reads Postgres too: the stored summaries are free and cover the record hour
+by hour, so the prompt tells it to start there and go to the raw dialog only for
+detail they do not carry. Those tools are built in `utility-agent`, not
+`agent-core`, for the same reason nothing above `repository.ts` imports `db` —
+`ask` takes them as an argument.
+
+Two things it cannot do. It cannot send a notification: a page you are looking
+at has no business also buzzing your phone. And it cannot write anything except
+a note, so the worst outcome of a wrong answer is a wrong answer.
+
+Answering takes minutes, so nothing is answered inside the request that asks.
+The question is stored, the thread is marked pending, a job is started, and the
+page reloads itself until the answer lands — `<meta http-equiv="refresh">`,
+which is the only way to poll on a platform that serves `script-src 'none'`.
+The refresh is set only while something is genuinely outstanding: a page that
+keeps reloading after the answer has landed fights the reader for the scroll
+position and, on a gated route, keeps the database awake.
+
+### What it remembers
+
+Every answer that has to rediscover what the agent is *for* pays for that
+discovery again, and the logs only get longer. So the chat keeps notes:
+`AgentNote`, keyed by a handle the model chooses, with a one-line summary and a
+body. Every summary line is in the prompt of every conversation; bodies are read
+on demand, because a memory that puts everything it knows into every prompt has
+stopped being a memory and become a cost.
+
+In Postgres rather than a bucket. Notes are small text that wants listing,
+overwriting and deleting; object storage would add an IAM surface and a second
+source of truth to buy nothing the database does not already do. And it is a
+*page*, `/agent/memory`, which is the part that matters: a memory nobody can see
+is a set of assertions repeated with growing confidence and never checked. Every
+note can be corrected or deleted by hand, and a note written by hand is read
+exactly like one the model wrote — so it is also where to tell it what it cannot
+discover, like which of the agent's habits are intentional.
+
+Reusing a key overwrites, which is how a note is corrected rather than
+accumulated beside its own stale version.
+
 ### Jobs, and the one hole in the perimeter
 
 A scheduler has no session, so scheduled work cannot live behind the gate. The
 `Utility` contract therefore grew an optional `jobs` map, reachable two ways.
 
 **As a job, for scheduled work.** `apps/web/src/job.ts` is a second entry point
-built into the same image: `bun dist/job.js agent hourly`. Scheduled work used to
+built into the same image: `bun dist/job.js agent hourly`. The same job resource
+serves the catch-up and each chat answer, with the arguments overridden per
+execution — one image, one job, one place where a bad build shows up. Scheduled work used to
 arrive as an HTTP request to the running service, which meant every summary had
 to finish inside a request timeout — and an agentic summary that reads around
 the window cannot promise that. As a Cloud Run job there is no request behind it
